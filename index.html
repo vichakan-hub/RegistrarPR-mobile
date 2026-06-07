@@ -154,11 +154,155 @@
     function resetList(){state.rows=[];state.rejectingId=null;resetSummary();el('approvalList').innerHTML='<div class="card empty">ยังไม่มีรายการ กรุณากดแสดงรายการ</div>';}
     function getRowById(id){return state.rows.find(r=>String(r.id)===String(id))||null;}
 
-    async function loadRows(){try{if(!state.currentUser?.id)throw new Error('ไม่พบข้อมูลผู้เข้าสู่ระบบ');showLoading('กำลังโหลดรายการ...');setStatus('listStatus','กำลังโหลดรายการ...','info');state.rejectingId=null;const status=safeText(el('filterStatus').value,'');let query=supabaseClient.from('grade_retest_requests').select('id,grade_result_id,student_id,student_code,student_name,subject_offering_id,subject_id,subject_code,subject_name,teacher_id,teacher_code,academic_year,term,class_level,room,original_grade_code,requested_retest_grade_code,status,submitted_at,updated_at,approved_at,rejected_at,rejected_reason,is_active').eq('is_active',true).order('submitted_at',{ascending:false});if(status)query=query.eq('status',status);const {data,error}=await query;if(error)throw error;state.rows=data||[];renderRows(state.rows);setStatus('listStatus',state.rows.length?`พบรายการ ${state.rows.length} รายการ`:'ไม่พบรายการตามเงื่อนไขที่เลือก',state.rows.length?'success':'warn');}catch(err){console.error('loadRows ERROR',err);state.rows=[];renderRows([]);setStatus('listStatus',err.message||'โหลดรายการไม่สำเร็จ','error');showToast('โหลดรายการไม่สำเร็จ',err.message||'เกิดข้อผิดพลาด','error');}finally{hideLoading();}}
+    async function loadRows(){
+      try{
+        if(!state.currentUser?.id) throw new Error('ไม่พบข้อมูลผู้เข้าสู่ระบบ');
+
+        showLoading('กำลังโหลดรายการ...');
+        setStatus('listStatus','กำลังโหลดรายการ...','info');
+        state.rejectingId = null;
+
+        const status = safeText(el('filterStatus').value,'');
+        const selectColumns = 'id,grade_result_id,student_id,student_code,student_name,subject_offering_id,subject_id,subject_code,subject_name,teacher_id,teacher_code,academic_year,term,class_level,room,original_grade_code,requested_retest_grade_code,status,submitted_at,updated_at,approved_at,rejected_at,rejected_reason,is_active';
+
+        const pageSize = 1000;
+        let from = 0;
+        let allRows = [];
+
+        while(true){
+          let query = supabaseClient
+            .from('grade_retest_requests')
+            .select(selectColumns)
+            .eq('is_active', true)
+            .order('submitted_at', { ascending:false })
+            .range(from, from + pageSize - 1);
+
+          if(status) query = query.eq('status', status);
+
+          const { data, error } = await query;
+          if(error) throw error;
+
+          const pageRows = Array.isArray(data) ? data : [];
+          allRows = allRows.concat(pageRows);
+
+          if(pageRows.length < pageSize) break;
+
+          from += pageSize;
+          setStatus('listStatus', `กำลังโหลดรายการ... ${allRows.length} รายการ`, 'info');
+        }
+
+        state.rows = allRows;
+        renderRows(state.rows);
+
+        setStatus(
+          'listStatus',
+          state.rows.length ? `พบรายการ ${state.rows.length} รายการ` : 'ไม่พบรายการตามเงื่อนไขที่เลือก',
+          state.rows.length ? 'success' : 'warn'
+        );
+      }catch(err){
+        console.error('loadRows ERROR',err);
+        state.rows=[];
+        renderRows([]);
+        setStatus('listStatus',err.message||'โหลดรายการไม่สำเร็จ','error');
+        showToast('โหลดรายการไม่สำเร็จ',err.message||'เกิดข้อผิดพลาด','error');
+      }finally{
+        hideLoading();
+      }
+    }
+
     function renderRows(rows){const list=el('approvalList');if(!rows.length){list.innerHTML='<div class="card empty">ไม่พบรายการตามเงื่อนไขที่เลือก</div>';updateSummary([]);return;}updateSummary(rows);list.innerHTML=rows.map(row=>{const canApprove=row.status==='pending_approval';const teacherText=safeText(row.teacher_code,'-');return `<div class="card"><div class="row-between"><div><div class="mono">${escapeHtml(safeText(row.student_code,'-'))}</div><div class="student-main">${escapeHtml(safeText(row.student_name,'-'))}</div><div class="student-sub">ชั้น ${escapeHtml(safeText(row.class_level,'-'))}/${escapeHtml(safeText(row.room,'-'))} • ส่งเมื่อ ${escapeHtml(formatThaiDateTime(row.submitted_at))}</div></div>${renderStatusBadge(row.status)}</div><div class="subject-box"><div class="mono">${escapeHtml(safeText(row.subject_code,'-'))}</div><div class="subject-name">${escapeHtml(safeText(row.subject_name,'-'))}</div><div class="student-sub">ปี ${escapeHtml(safeText(row.academic_year,'-'))} / เทอม ${escapeHtml(safeText(row.term,'-'))} • ครูผู้ส่ง ${escapeHtml(teacherText)}</div></div><div class="grade-pair"><div class="grade-box"><div class="grade-label">ผลเดิม</div>${renderGradePill(row.original_grade_code)}</div><div class="grade-box"><div class="grade-label">ผลแก้ตัว</div>${renderGradePill(row.requested_retest_grade_code)}</div></div>${row.status==='rejected'?`<div class="small-note" style="margin-top:10px;color:#d92d20;">เหตุผล: ${escapeHtml(safeText(row.rejected_reason,'-'))}</div>`:''}${canApprove?`<div class="approval-actions"><button class="btn btn-success" type="button" data-approve-id="${escapeHtml(row.id)}">อนุมัติ</button><button class="btn btn-danger" type="button" data-reject-id="${escapeHtml(row.id)}">ไม่อนุมัติ</button></div>`:''}</div>`;}).join('');bindRowButtons();}
     function bindRowButtons(){document.querySelectorAll('[data-approve-id]').forEach(btn=>btn.addEventListener('click',async()=>approveRequest(String(btn.dataset.approveId||''))));document.querySelectorAll('[data-reject-id]').forEach(btn=>btn.addEventListener('click',()=>openRejectModal(String(btn.dataset.rejectId||''))));}
 
-    async function approveRequest(requestId){try{const row=getRowById(requestId);if(!row)throw new Error('ไม่พบรายการที่ต้องการอนุมัติ');if(row.status!=='pending_approval')throw new Error('รายการนี้ไม่ได้อยู่ในสถานะรออนุมัติ');if(!row.grade_result_id)throw new Error('ไม่พบ grade_result_id');const approvedAt=new Date().toISOString();const approvedGrade=normalizeGradeValue(row.requested_retest_grade_code);if(!approvedGrade)throw new Error('ไม่พบผลสอบแก้ตัวที่ต้องการอนุมัติ');showLoading('กำลังอนุมัติผลสอบแก้ตัว...');setStatus('listStatus','กำลังอนุมัติผลสอบแก้ตัว...','info');const {data:gradeData,error:gradeError}=await supabaseClient.from('grade_results').update({retest_grade_code:approvedGrade}).eq('id',row.grade_result_id).select('id,retest_grade_code');if(gradeError)throw gradeError;if(!gradeData||!gradeData.length)throw new Error('ไม่พบรายการ grade_results ที่ต้องการอัปเดต หรือไม่มีสิทธิ์อัปเดต');const {data:reqData,error:reqError}=await supabaseClient.from('grade_retest_requests').update({status:'approved',approved_at:approvedAt,approved_by:state.currentUser.id,updated_at:approvedAt,rejected_at:null,rejected_by:null,rejected_reason:null}).eq('id',requestId).eq('status','pending_approval').eq('is_active',true).select('id,status');if(reqError)throw reqError;if(!reqData||!reqData.length)throw new Error('อัปเดตสถานะคำขอไม่สำเร็จ หรือรายการนี้ไม่อยู่ในสถานะรออนุมัติแล้ว');showToast('อนุมัติสำเร็จ',`อนุมัติผลสอบแก้ตัวของ ${row.student_name} แล้ว`,'success');await loadRows();}catch(err){console.error('approveRequest ERROR',err);const msg=err?.message||err?.details||err?.hint||'อนุมัติไม่สำเร็จ';setStatus('listStatus',msg,'error');showToast('อนุมัติไม่สำเร็จ',msg,'error');}finally{hideLoading();}}
+    async function refreshStudentReportCache(studentCode){
+      const code = safeText(studentCode,'');
+      if(!code) return { ok:false, message:'ไม่พบรหัสนักเรียนสำหรับอัปเดต cache' };
+
+      const { error } = await supabaseClient.rpc('refresh_student_grade_report_cache', {
+        p_student_code: code
+      });
+
+      if(error){
+        console.warn('refresh_student_grade_report_cache ERROR', error);
+        return { ok:false, message:error.message || 'อัปเดต cache ไม่สำเร็จ' };
+      }
+
+      return { ok:true, message:'อัปเดต cache สำเร็จ' };
+    }
+
+    async function approveRequest(requestId){
+      try{
+        const row = getRowById(requestId);
+        if(!row) throw new Error('ไม่พบรายการที่ต้องการอนุมัติ');
+        if(row.status !== 'pending_approval') throw new Error('รายการนี้ไม่ได้อยู่ในสถานะรออนุมัติ');
+        if(!row.grade_result_id) throw new Error('ไม่พบ grade_result_id');
+
+        const approvedAt = new Date().toISOString();
+        const approvedGrade = normalizeGradeValue(row.requested_retest_grade_code);
+        if(!approvedGrade) throw new Error('ไม่พบผลสอบแก้ตัวที่ต้องการอนุมัติ');
+
+        showLoading('กำลังอนุมัติผลสอบแก้ตัว...');
+        setStatus('listStatus','กำลังอนุมัติผลสอบแก้ตัว...','info');
+
+        const { data:gradeData, error:gradeError } = await supabaseClient
+          .from('grade_results')
+          .update({ retest_grade_code: approvedGrade })
+          .eq('id', row.grade_result_id)
+          .select('id,retest_grade_code');
+
+        if(gradeError) throw gradeError;
+        if(!gradeData || !gradeData.length){
+          throw new Error('ไม่พบรายการ grade_results ที่ต้องการอัปเดต หรือไม่มีสิทธิ์อัปเดต');
+        }
+
+        const { data:reqData, error:reqError } = await supabaseClient
+          .from('grade_retest_requests')
+          .update({
+            status:'approved',
+            approved_at:approvedAt,
+            approved_by:state.currentUser.id,
+            updated_at:approvedAt,
+            rejected_at:null,
+            rejected_by:null,
+            rejected_reason:null
+          })
+          .eq('id', requestId)
+          .eq('status', 'pending_approval')
+          .eq('is_active', true)
+          .select('id,status');
+
+        if(reqError) throw reqError;
+        if(!reqData || !reqData.length){
+          throw new Error('อัปเดตสถานะคำขอไม่สำเร็จ หรือรายการนี้ไม่อยู่ในสถานะรออนุมัติแล้ว');
+        }
+
+        setStatus('listStatus','อนุมัติแล้ว กำลังอัปเดตข้อมูล StudentPR...', 'info');
+
+        const cacheResult = await refreshStudentReportCache(row.student_code);
+
+        if(!cacheResult.ok){
+          showToast(
+            'อนุมัติสำเร็จ แต่ StudentPR cache ยังไม่อัปเดต',
+            cacheResult.message || 'กรุณาอัปเดต cache ภายหลัง',
+            'warn'
+          );
+        }else{
+          showToast(
+            'อนุมัติสำเร็จ',
+            `อนุมัติผลสอบแก้ตัวของ ${row.student_name} แล้ว และอัปเดต StudentPR แล้ว`,
+            'success'
+          );
+        }
+
+        await loadRows();
+      }catch(err){
+        console.error('approveRequest ERROR',err);
+        const msg=err?.message||err?.details||err?.hint||'อนุมัติไม่สำเร็จ';
+        setStatus('listStatus',msg,'error');
+        showToast('อนุมัติไม่สำเร็จ',msg,'error');
+      }finally{
+        hideLoading();
+      }
+    }
     function openRejectModal(requestId){const row=getRowById(requestId);if(!row){showToast('ไม่พบรายการ','ไม่พบรายการที่ต้องการไม่อนุมัติ','error');return;}state.rejectingId=requestId;el('rejectReasonInput').value='';el('rejectModalSub').textContent=`${safeText(row.student_name,'-')} • ${safeText(row.subject_code,'-')}`;el('rejectModal').classList.add('show');}
     function closeRejectModal(){state.rejectingId=null;el('rejectModal').classList.remove('show');el('rejectReasonInput').value='';}
     async function confirmReject(){await rejectRequest(state.rejectingId,safeText(el('rejectReasonInput').value,''));}
