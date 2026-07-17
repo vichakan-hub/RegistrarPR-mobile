@@ -35,7 +35,30 @@
     .card-head{display:flex;align-items:center;gap:12px;margin-bottom:16px}.card-icon{width:50px;height:50px;border-radius:18px;background:#dbeafe;color:#1d4ed8;display:flex;align-items:center;justify-content:center;font-size:24px;flex:0 0 auto}
     .kicker{font-size:12px;font-weight:900;color:var(--primary);letter-spacing:.08em}.head-title{font-size:20px;font-weight:900;line-height:1.2;color:#000000}.field{margin-top:12px}.label{display:block;font-size:14px;font-weight:800;color:#4d6078;margin-bottom:7px}
     .input,.select,.textarea{width:100%;border-radius:18px;border:1px solid #cbd8e6;background:#fff;color:var(--text);outline:none;font-size:16px;font-weight:650}.input,.select{height:54px;padding:0 14px}.textarea{min-height:96px;padding:12px 14px;resize:vertical;line-height:1.55}
-    .input:focus,.select:focus,.textarea:focus{border-color:var(--primary);box-shadow:0 0 0 4px rgba(37,99,235,.12)}
+    .input:focus,.select:focus,.textarea:focus{
+  border-color:var(--primary);
+  box-shadow:0 0 0 4px rgba(37,99,235,.12)
+}
+
+.remember-row{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  margin-top:14px;
+  color:#4d6078;
+  font-size:14px;
+  font-weight:800;
+  cursor:pointer;
+  user-select:none;
+}
+
+.remember-row input{
+  width:20px;
+  height:20px;
+  margin:0;
+  accent-color:var(--primary);
+  cursor:pointer;
+}
     .btn{min-height:50px;border-radius:18px;padding:0 16px;display:inline-flex;align-items:center;justify-content:center;gap:8px;font-weight:900;font-size:15px;transition:.12s ease}.btn:active{transform:scale(.985)}
     .btn-primary{background:var(--primary);color:#fff;box-shadow:0 10px 22px rgba(37,99,235,.22)}.btn-secondary{background:#eef3f8;color:#17324d}.btn-danger{background:#fff0ef;color:var(--danger);border:1px solid #ffd2cf}.btn-success{background:#e9f8ef;color:#0f9d58;border:1px solid #bfe6cb}.btn-block{width:100%}.btn:disabled{background:#d8e1ea;color:#7b8896;box-shadow:none}
     .status{margin-top:12px;min-height:24px;font-size:14px;line-height:1.55;font-weight:700}.status.info{color:var(--primary-dark)}.status.success{color:var(--success)}.status.warn{color:var(--warning)}.status.error{color:var(--danger)}
@@ -64,8 +87,29 @@
     <section class="login-card">
       <div class="card-head"><div class="card-icon">✅</div><div><div class="kicker">APPROVAL LOGIN</div><div class="head-title">เข้าสู่ระบบผู้อนุมัติ</div></div></div>
       <div class="field"><label class="label" for="loginTeacherCode">ชื่อผู้ใช้</label><input id="loginTeacherCode" class="input" type="text" placeholder="เช่น G001" autocomplete="username"></div>
-      <div class="field"><label class="label" for="loginPassword">รหัสผ่าน</label><input id="loginPassword" class="input" type="password" placeholder="กรอกรหัสผ่าน" autocomplete="current-password"></div>
-      <button id="loginBtn" class="btn btn-primary btn-block" style="margin-top:16px;">เข้าสู่ระบบ</button>
+<div class="field">
+  <label class="label" for="loginPassword">รหัสผ่าน</label>
+  <input
+    id="loginPassword"
+    class="input"
+    type="password"
+    placeholder="กรอกรหัสผ่าน"
+    autocomplete="current-password"
+  >
+</div>
+
+<label class="remember-row" for="rememberMe">
+  <input id="rememberMe" type="checkbox">
+  <span>จดจำฉันไว้</span>
+</label>
+
+<button
+  id="loginBtn"
+  class="btn btn-primary btn-block"
+  style="margin-top:16px;"
+>
+  เข้าสู่ระบบ
+</button>
       <div id="loginStatus" class="status info">กรุณาเข้าสู่ระบบก่อนใช้งาน</div>
       <div class="small-note" style="margin-top:12px;">หน้านี้อนุญาตเฉพาะผู้ใช้รหัส G สำหรับงานทะเบียน/วัดผล</div>
     </section>
@@ -109,8 +153,16 @@
     const SUPABASE_ANON_KEY='sb_publishable_bvvfwIdiPxyN2hYXVogVHQ_QxXE0I1_';
     const supabaseClient=supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY);
     const el=id=>document.getElementById(id);
-    const REGISTRAR_SESSION_KEY='registrarMobileUser';
-    const state={currentUser:null,rows:[],rejectingId:null};
+const REGISTRAR_SESSION_KEY='registrarMobileUser';
+const REGISTRAR_REMEMBER_KEY='registrarMobileRememberedUser';
+const REGISTRAR_REMEMBER_DAYS=30;
+
+const state={
+  currentUser:null,
+  rows:[],
+  rejectingId:null,
+  rememberMe:false
+};
 
     function escapeHtml(text){return String(text??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'","&#039;");}
     function safeText(value,fallback=''){const s=String(value??'').trim();return s||fallback;}
@@ -134,12 +186,165 @@
       return {id:user.id||'',teacher_code:user.teacher_code||'',first_name:user.first_name||'',last_name:user.last_name||'',full_name:user.full_name||[user.first_name||'',user.last_name||''].join(' ').trim()||user.teacher_code,role_prefix:code.charAt(0),teacher_role:user.teacher_role||'registrar',is_active:user.is_active!==false};
     }
 
-    function saveSession(){if(state.currentUser)sessionStorage.setItem(REGISTRAR_SESSION_KEY,JSON.stringify(state.currentUser));}
-    function restoreSession(){try{const raw=sessionStorage.getItem(REGISTRAR_SESSION_KEY);if(!raw)return false;state.currentUser=JSON.parse(raw);if(!isRegistrarPageAllowed(state.currentUser.teacher_code)){sessionStorage.removeItem(REGISTRAR_SESSION_KEY);return false;}showApp();return true;}catch(e){sessionStorage.removeItem(REGISTRAR_SESSION_KEY);return false;}}
+   function clearStoredSession(){
+  sessionStorage.removeItem(REGISTRAR_SESSION_KEY);
+  localStorage.removeItem(REGISTRAR_REMEMBER_KEY);
+}
+
+function saveSession(){
+  if(!state.currentUser) return;
+
+  if(state.rememberMe){
+    const expiresAt =
+      Date.now() + (REGISTRAR_REMEMBER_DAYS * 24 * 60 * 60 * 1000);
+
+    localStorage.setItem(
+      REGISTRAR_REMEMBER_KEY,
+      JSON.stringify({
+        user:state.currentUser,
+        expiresAt
+      })
+    );
+
+    sessionStorage.removeItem(REGISTRAR_SESSION_KEY);
+    return;
+  }
+
+  sessionStorage.setItem(
+    REGISTRAR_SESSION_KEY,
+    JSON.stringify(state.currentUser)
+  );
+
+  localStorage.removeItem(REGISTRAR_REMEMBER_KEY);
+}
+
+function restoreSession(){
+  try{
+    const rememberedRaw =
+      localStorage.getItem(REGISTRAR_REMEMBER_KEY);
+
+    if(rememberedRaw){
+      const rememberedData = JSON.parse(rememberedRaw);
+      const rememberedUser = rememberedData?.user;
+      const expiresAt = Number(rememberedData?.expiresAt || 0);
+
+      if(
+        rememberedUser &&
+        expiresAt > Date.now() &&
+        isRegistrarPageAllowed(rememberedUser.teacher_code)
+      ){
+        state.currentUser = rememberedUser;
+        state.rememberMe = true;
+
+        if(el('rememberMe')){
+          el('rememberMe').checked = true;
+        }
+
+        showApp();
+        return true;
+      }
+
+      localStorage.removeItem(REGISTRAR_REMEMBER_KEY);
+    }
+
+    const sessionRaw =
+      sessionStorage.getItem(REGISTRAR_SESSION_KEY);
+
+    if(!sessionRaw) return false;
+
+    const sessionUser = JSON.parse(sessionRaw);
+
+    if(!isRegistrarPageAllowed(sessionUser?.teacher_code)){
+      sessionStorage.removeItem(REGISTRAR_SESSION_KEY);
+      return false;
+    }
+
+    state.currentUser = sessionUser;
+    state.rememberMe = false;
+
+    if(el('rememberMe')){
+      el('rememberMe').checked = false;
+    }
+
+    showApp();
+    return true;
+
+  }catch(error){
+    console.warn('restoreSession ERROR',error);
+    clearStoredSession();
+    return false;
+  }
+}
     function showApp(){el('loginView').classList.add('hidden');el('appView').classList.remove('hidden');el('bottomNav').classList.remove('hidden');el('homeUserName').textContent=`ผู้อนุมัติ ${state.currentUser?.full_name||'-'}`;}
 
-    async function login(){try{setStatus('loginStatus','กำลังตรวจสอบสิทธิ์...','info');showLoading('กำลังเข้าสู่ระบบ...');const user=await loginWithRegistrarRpc(el('loginTeacherCode').value,el('loginPassword').value);state.currentUser=user;saveSession();showApp();setActiveTab('home');showToast('เข้าสู่ระบบสำเร็จ',`ยินดีต้อนรับ ${user.full_name||user.teacher_code}`,'success');}catch(err){const msg=err?.message||'เข้าสู่ระบบไม่สำเร็จ';setStatus('loginStatus',msg,'error');showToast('เข้าสู่ระบบไม่สำเร็จ',msg,'error');}finally{hideLoading();}}
-    function logout(){state.currentUser=null;state.rows=[];state.rejectingId=null;sessionStorage.removeItem(REGISTRAR_SESSION_KEY);el('appView').classList.add('hidden');el('bottomNav').classList.add('hidden');el('loginView').classList.remove('hidden');el('loginPassword').value='';resetList();setStatus('loginStatus','ออกจากระบบแล้ว','info');}
+    async function login(){
+  try{
+    setStatus(
+      'loginStatus',
+      'กำลังตรวจสอบสิทธิ์...',
+      'info'
+    );
+
+    showLoading('กำลังเข้าสู่ระบบ...');
+
+    const user = await loginWithRegistrarRpc(
+      el('loginTeacherCode').value,
+      el('loginPassword').value
+    );
+
+    state.currentUser = user;
+    state.rememberMe = Boolean(el('rememberMe')?.checked);
+
+    saveSession();
+    showApp();
+    setActiveTab('home');
+
+    showToast(
+      'เข้าสู่ระบบสำเร็จ',
+      state.rememberMe
+        ? `ยินดีต้อนรับ ${user.full_name||user.teacher_code} ระบบจะจดจำการเข้าสู่ระบบไว้ 30 วัน`
+        : `ยินดีต้อนรับ ${user.full_name||user.teacher_code}`,
+      'success'
+    );
+
+  }catch(err){
+    const msg =
+      err?.message || 'เข้าสู่ระบบไม่สำเร็จ';
+
+    setStatus('loginStatus',msg,'error');
+    showToast('เข้าสู่ระบบไม่สำเร็จ',msg,'error');
+
+  }finally{
+    hideLoading();
+  }
+}
+    function logout(){
+  state.currentUser = null;
+  state.rows = [];
+  state.rejectingId = null;
+  state.rememberMe = false;
+
+  clearStoredSession();
+
+  el('appView').classList.add('hidden');
+  el('bottomNav').classList.add('hidden');
+  el('loginView').classList.remove('hidden');
+
+  el('loginTeacherCode').value = '';
+  el('loginPassword').value = '';
+
+  if(el('rememberMe')){
+    el('rememberMe').checked = false;
+  }
+
+  resetList();
+
+  setStatus(
+    'loginStatus',
+    'ออกจากระบบแล้ว',
+    'info'
+  );
+}
     function setActiveTab(tab){el('homeView').classList.toggle('hidden',tab!=='home');el('approvalView').classList.toggle('hidden',tab!=='approval');el('navHomeBtn').classList.toggle('active',tab==='home');el('navPendingBtn').classList.toggle('active',tab==='approval'&&el('filterStatus').value==='pending_approval');el('navHistoryBtn').classList.toggle('active',tab==='approval'&&el('filterStatus').value!=='pending_approval');}
     function openApproval(status){el('filterStatus').value=status;setActiveTab('approval');resetList();setStatus('listStatus','กรุณากดแสดงรายการ','info');}
 
