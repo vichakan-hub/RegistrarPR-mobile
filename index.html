@@ -182,8 +182,23 @@
   <script>
     const SUPABASE_URL='https://jiorecubzlmfhwalhrsz.supabase.co';
     const SUPABASE_ANON_KEY='sb_publishable_bvvfwIdiPxyN2hYXVogVHQ_QxXE0I1_';
-    const supabaseClient=supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY);
-    const el=id=>document.getElementById(id);
+const supabaseClient=supabase.createClient(
+  SUPABASE_URL,
+  SUPABASE_ANON_KEY
+);
+
+const el=id=>document.getElementById(id);
+
+/*
+  Public Key สำหรับสมัครรับ Web Push
+  ค่านี้ใส่ในหน้าเว็บได้
+  ห้ามนำ VAPID Private Key มาใส่ในไฟล์นี้
+*/
+const VAPID_PUBLIC_KEY =
+  'BLpJdDlg3eiWMc0cDTJdhCuN3DHauIgvfj7d14dOzq9XiYNlCUCoEolSt7WPfBy7xcv38ClHbnZdt3srEDh62iw';
+
+const REGISTRAR_PUSH_ENDPOINT_KEY =
+  'registrarPushEndpoint';
 const REGISTRAR_SESSION_KEY='registrarMobileUser';
 const REGISTRAR_REMEMBER_KEY='registrarMobileRememberedUser';
 const REGISTRAR_REMEMBER_DAYS=30;
@@ -192,7 +207,10 @@ const state={
   currentUser:null,
   rows:[],
   rejectingId:null,
-  rememberMe:false
+  rememberMe:false,
+
+  pushSubscription:null,
+  notificationBusy:false
 };
 
     function escapeHtml(text){return String(text??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'","&#039;");}
@@ -203,6 +221,378 @@ const state={
     function showToast(title,text,type='success'){const wrap=el('toastWrap');if(!wrap)return;const node=document.createElement('div');node.className=`toast ${type}`;node.innerHTML=`<div class="toast-title">${escapeHtml(title)}</div><div class="toast-text">${escapeHtml(text)}</div>`;wrap.appendChild(node);setTimeout(()=>node.remove(),3400);}
     function showLoading(text='กำลังโหลด...'){el('loadingText').textContent=text;el('loadingCover').classList.add('show');}
     function hideLoading(){el('loadingCover').classList.remove('show');}
+
+    function isPushNotificationSupported(){
+  return (
+    'serviceWorker' in navigator &&
+    'PushManager' in window &&
+    'Notification' in window
+  );
+}
+
+function urlBase64ToUint8Array(base64String){
+  const padding =
+    '='.repeat((4 - base64String.length % 4) % 4);
+
+  const base64 = (
+    base64String + padding
+  )
+    .replace(/-/g, '+')
+    .replace(/_/g, '/');
+
+  const rawData = window.atob(base64);
+
+  return Uint8Array.from(
+    [...rawData].map(character =>
+      character.charCodeAt(0)
+    )
+  );
+}
+
+async function getExistingPushSubscription(){
+  if(!isPushNotificationSupported()){
+    state.pushSubscription = null;
+    updateNotificationButton();
+    return null;
+  }
+
+  try{
+    const registration =
+      await navigator.serviceWorker.ready;
+
+    const subscription =
+      await registration.pushManager.getSubscription();
+
+    state.pushSubscription = subscription || null;
+
+    if(subscription?.endpoint){
+      localStorage.setItem(
+        REGISTRAR_PUSH_ENDPOINT_KEY,
+        subscription.endpoint
+      );
+    }else{
+      localStorage.removeItem(
+        REGISTRAR_PUSH_ENDPOINT_KEY
+      );
+    }
+
+    updateNotificationButton();
+
+    return subscription || null;
+
+  }catch(error){
+    console.warn(
+      'getExistingPushSubscription ERROR',
+      error
+    );
+
+    state.pushSubscription = null;
+    updateNotificationButton();
+
+    return null;
+  }
+}
+
+function getPushSubscriptionData(subscription){
+  if(!subscription){
+    throw new Error('ไม่พบข้อมูล Push Subscription');
+  }
+
+  const subscriptionJson =
+    subscription.toJSON();
+
+  const endpoint =
+    String(subscription.endpoint || '').trim();
+
+  const p256dh =
+    String(subscriptionJson?.keys?.p256dh || '').trim();
+
+  const authKey =
+    String(subscriptionJson?.keys?.auth || '').trim();
+
+  if(!endpoint){
+    throw new Error('ไม่พบ Push endpoint');
+  }
+
+  if(!p256dh){
+    throw new Error('ไม่พบ Push p256dh key');
+  }
+
+  if(!authKey){
+    throw new Error('ไม่พบ Push auth key');
+  }
+
+  return {
+    endpoint,
+    p256dh,
+    authKey
+  };
+}
+
+
+async function savePushSubscriptionToSupabase(
+  subscription
+){
+  if(!state.currentUser?.id){
+    throw new Error(
+      'ไม่พบข้อมูลผู้ใช้งาน กรุณาเข้าสู่ระบบใหม่'
+    );
+  }
+
+  const {
+    endpoint,
+    p256dh,
+    authKey
+  } = getPushSubscriptionData(subscription);
+
+  const deviceName = [
+    navigator.platform || '',
+    navigator.vendor || ''
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+
+  const { data, error } =
+    await supabaseClient.rpc(
+      'upsert_registrar_push_subscription',
+      {
+        p_registrar_user_id:
+          String(state.currentUser.id),
+
+        p_teacher_code:
+          String(
+            state.currentUser.teacher_code || ''
+          )
+            .trim()
+            .toUpperCase(),
+
+        p_endpoint:
+          endpoint,
+
+        p_p256dh:
+          p256dh,
+
+        p_auth_key:
+          authKey,
+
+        p_user_agent:
+          navigator.userAgent || null,
+
+        p_device_name:
+          deviceName || 'RegistrarPR Mobile'
+      }
+    );
+
+  if(error){
+    throw error;
+  }
+
+  if(!data || data.ok !== true){
+    throw new Error(
+      data?.message ||
+      'บันทึกอุปกรณ์รับแจ้งเตือนไม่สำเร็จ'
+    );
+  }
+
+  localStorage.setItem(
+    REGISTRAR_PUSH_ENDPOINT_KEY,
+    endpoint
+  );
+
+  return data;
+}
+
+
+async function enablePushNotifications(){
+  if(!isPushNotificationSupported()){
+    throw new Error(
+      'อุปกรณ์หรือเบราว์เซอร์นี้ไม่รองรับ Web Push'
+    );
+  }
+
+  if(!state.currentUser?.id){
+    throw new Error(
+      'กรุณาเข้าสู่ระบบก่อนเปิดการแจ้งเตือน'
+    );
+  }
+
+  let permission =
+    Notification.permission;
+
+  if(permission === 'default'){
+    permission =
+      await Notification.requestPermission();
+  }
+
+  if(permission !== 'granted'){
+    if(permission === 'denied'){
+      throw new Error(
+        'การแจ้งเตือนถูกบล็อก กรุณาอนุญาตจากการตั้งค่าเว็บไซต์'
+      );
+    }
+
+    throw new Error(
+      'ยังไม่ได้รับอนุญาตให้ส่งการแจ้งเตือน'
+    );
+  }
+
+  const registration =
+    await navigator.serviceWorker.ready;
+
+  let subscription =
+    await registration.pushManager
+      .getSubscription();
+
+  if(!subscription){
+    subscription =
+      await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+
+        applicationServerKey:
+          urlBase64ToUint8Array(
+            VAPID_PUBLIC_KEY
+          )
+      });
+  }
+
+  await savePushSubscriptionToSupabase(
+    subscription
+  );
+
+  state.pushSubscription =
+    subscription;
+
+  updateNotificationButton();
+
+  return subscription;
+}
+
+async function disablePushNotifications(){
+  let subscription =
+    state.pushSubscription;
+
+  if(!subscription && isPushNotificationSupported()){
+    const registration =
+      await navigator.serviceWorker.ready;
+
+    subscription =
+      await registration.pushManager
+        .getSubscription();
+  }
+
+  const savedEndpoint =
+    subscription?.endpoint ||
+    localStorage.getItem(
+      REGISTRAR_PUSH_ENDPOINT_KEY
+    ) ||
+    '';
+
+  /*
+    ปิดสถานะอุปกรณ์ใน Supabase ก่อน
+    เพื่อไม่ให้ Edge Function ส่งแจ้งเตือนมาที่เครื่องนี้อีก
+  */
+  if(savedEndpoint){
+    const { data, error } =
+      await supabaseClient.rpc(
+        'disable_registrar_push_subscription',
+        {
+          p_endpoint: savedEndpoint
+        }
+      );
+
+    if(error){
+      throw error;
+    }
+
+    if(data && data.ok === false){
+      throw new Error(
+        data.message ||
+        'ปิดการแจ้งเตือนในฐานข้อมูลไม่สำเร็จ'
+      );
+    }
+  }
+
+  /*
+    ยกเลิก Push Subscription จากเบราว์เซอร์
+  */
+  if(subscription){
+    const unsubscribed =
+      await subscription.unsubscribe();
+
+    if(!unsubscribed){
+      console.warn(
+        'เบราว์เซอร์ไม่สามารถยกเลิก Push Subscription ได้'
+      );
+    }
+  }
+
+  state.pushSubscription = null;
+
+  localStorage.removeItem(
+    REGISTRAR_PUSH_ENDPOINT_KEY
+  );
+
+  updateNotificationButton();
+
+  return true;
+}
+
+function updateNotificationButton(){
+  const button = el('notificationBtn');
+  const icon = el('notificationIcon');
+  const title = el('notificationTitle');
+  const text = el('notificationText');
+
+  if(!button || !icon || !title || !text){
+    return;
+  }
+
+  if(!isPushNotificationSupported()){
+    button.disabled = true;
+    icon.textContent = '🔕';
+    title.textContent = 'อุปกรณ์ไม่รองรับการแจ้งเตือน';
+    text.textContent =
+      'กรุณาเปิดด้วย Chrome, Edge หรือเพิ่มแอปไว้บนหน้าจอโฮม';
+
+    return;
+  }
+
+  if(Notification.permission === 'denied'){
+    button.disabled = true;
+    icon.textContent = '🚫';
+    title.textContent = 'การแจ้งเตือนถูกบล็อก';
+    text.textContent =
+      'กรุณาอนุญาตการแจ้งเตือนจากการตั้งค่าเว็บไซต์ของเบราว์เซอร์';
+
+    return;
+  }
+
+  if(state.notificationBusy){
+    button.disabled = true;
+    icon.textContent = '⏳';
+    title.textContent = 'กำลังตั้งค่าการแจ้งเตือน';
+    text.textContent = 'กรุณารอสักครู่';
+
+    return;
+  }
+
+  button.disabled = false;
+
+  if(state.pushSubscription){
+    icon.textContent = '🔔';
+    title.textContent = 'เปิดการแจ้งเตือนแล้ว';
+    text.textContent =
+      'แตะเพื่อปิดการแจ้งเตือนของอุปกรณ์เครื่องนี้';
+
+    return;
+  }
+
+  icon.textContent = '🔔';
+  title.textContent = 'เปิดการแจ้งเตือน';
+  text.textContent =
+    'รับแจ้งเตือนเมื่อมีครูส่งผลสอบแก้ตัวมาใหม่';
+}
 
     async function loginWithRegistrarRpc(teacherCodeRaw,passwordRaw){
       const teacherCode=normalizeTeacherCode(teacherCodeRaw), password=String(passwordRaw||'').trim();
@@ -306,7 +696,25 @@ function restoreSession(){
     return false;
   }
 }
-    function showApp(){el('loginView').classList.add('hidden');el('appView').classList.remove('hidden');el('bottomNav').classList.remove('hidden');el('homeUserName').textContent=`ผู้อนุมัติ ${state.currentUser?.full_name||'-'}`;}
+function showApp(){
+  el('loginView').classList.add('hidden');
+  el('appView').classList.remove('hidden');
+  el('bottomNav').classList.remove('hidden');
+
+  el('homeUserName').textContent =
+    `ผู้อนุมัติ ${state.currentUser?.full_name||'-'}`;
+
+  updateNotificationButton();
+
+  getExistingPushSubscription()
+    .catch(error=>{
+      console.warn(
+        'ตรวจสอบ Push Subscription ไม่สำเร็จ',
+        error
+      );
+    });
+}
+    
 
     async function login(){
   try{
@@ -544,7 +952,89 @@ function restoreSession(){
     async function confirmReject(){await rejectRequest(state.rejectingId,safeText(el('rejectReasonInput').value,''));}
     async function rejectRequest(requestId,reason){try{const row=getRowById(requestId);if(!row)throw new Error('ไม่พบรายการที่ต้องการไม่อนุมัติ');if(row.status!=='pending_approval')throw new Error('รายการนี้ไม่ได้อยู่ในสถานะรออนุมัติ');if(!reason)throw new Error('กรุณาระบุเหตุผลที่ไม่อนุมัติ');const rejectedAt=new Date().toISOString();showLoading('กำลังบันทึกผลไม่อนุมัติ...');setStatus('listStatus','กำลังบันทึกผลไม่อนุมัติ...','info');const {error}=await supabaseClient.from('grade_retest_requests').update({status:'rejected',rejected_at:rejectedAt,rejected_by:state.currentUser.id,rejected_reason:reason,updated_at:rejectedAt}).eq('id',requestId).eq('status','pending_approval').eq('is_active',true);if(error)throw error;closeRejectModal();showToast('บันทึกไม่อนุมัติแล้ว',`รายการของ ${row.student_name} ถูกเปลี่ยนเป็นไม่อนุมัติ`,'success');await loadRows();}catch(err){console.error('rejectRequest ERROR',err);const msg=err?.message||'บันทึกไม่อนุมัติไม่สำเร็จ';setStatus('listStatus',msg,'error');showToast('ไม่อนุมัติไม่สำเร็จ',msg,'error');}finally{hideLoading();}}
 
-    function bindEvents(){el('loginBtn').addEventListener('click',login);el('loginTeacherCode').addEventListener('keydown',e=>{if(e.key==='Enter')login();});el('loginPassword').addEventListener('keydown',e=>{if(e.key==='Enter')login();});el('logoutBtn').addEventListener('click',logout);el('goPendingBtn').addEventListener('click',()=>openApproval('pending_approval'));el('goHistoryBtn').addEventListener('click',()=>openApproval('approved'));el('navHomeBtn').addEventListener('click',()=>setActiveTab('home'));el('navPendingBtn').addEventListener('click',()=>openApproval('pending_approval'));el('navHistoryBtn').addEventListener('click',()=>openApproval('approved'));el('loadBtn').addEventListener('click',loadRows);el('filterStatus').addEventListener('change',()=>{resetList();setStatus('listStatus','เปลี่ยนสถานะแล้ว กรุณากดแสดงรายการอีกครั้ง','info');setActiveTab('approval');});el('cancelRejectBtn').addEventListener('click',closeRejectModal);el('confirmRejectBtn').addEventListener('click',confirmReject);}
+   function bindEvents(){
+  el('loginBtn')
+    .addEventListener('click', login);
+
+  el('loginTeacherCode')
+    .addEventListener('keydown', event=>{
+      if(event.key === 'Enter'){
+        login();
+      }
+    });
+
+  el('loginPassword')
+    .addEventListener('keydown', event=>{
+      if(event.key === 'Enter'){
+        login();
+      }
+    });
+
+  el('logoutBtn')
+    .addEventListener('click', logout);
+
+  el('goPendingBtn')
+    .addEventListener('click', ()=>{
+      openApproval('pending_approval');
+    });
+
+  el('goHistoryBtn')
+    .addEventListener('click', ()=>{
+      openApproval('approved');
+    });
+
+  /*
+    ปุ่มเปิดและปิด Push Notification
+  */
+  el('notificationBtn')
+    .addEventListener(
+      'click',
+      togglePushNotifications
+    );
+
+  el('navHomeBtn')
+    .addEventListener('click', ()=>{
+      setActiveTab('home');
+    });
+
+  el('navPendingBtn')
+    .addEventListener('click', ()=>{
+      openApproval('pending_approval');
+    });
+
+  el('navHistoryBtn')
+    .addEventListener('click', ()=>{
+      openApproval('approved');
+    });
+
+  el('loadBtn')
+    .addEventListener('click', loadRows);
+
+  el('filterStatus')
+    .addEventListener('change', ()=>{
+      resetList();
+
+      setStatus(
+        'listStatus',
+        'เปลี่ยนสถานะแล้ว กรุณากดแสดงรายการอีกครั้ง',
+        'info'
+      );
+
+      setActiveTab('approval');
+    });
+
+  el('cancelRejectBtn')
+    .addEventListener(
+      'click',
+      closeRejectModal
+    );
+
+  el('confirmRejectBtn')
+    .addEventListener(
+      'click',
+      confirmReject
+    );
+}
     function init(){bindEvents();resetSummary();if(restoreSession())setActiveTab('home');else setStatus('loginStatus','กรุณาเข้าสู่ระบบก่อนใช้งาน','info');}
     document.addEventListener('DOMContentLoaded',init);
     if('serviceWorker' in navigator){window.addEventListener('load',()=>{navigator.serviceWorker.register('sw.js').then(()=>console.log('RegistrarPR mobile service worker registered')).catch(err=>console.warn('Service worker registration failed:',err));});}
