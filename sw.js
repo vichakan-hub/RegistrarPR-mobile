@@ -88,3 +88,50 @@ self.addEventListener('push', event => {
     )
   );
 });
+/*
+  เมื่อผู้ใช้แตะ Push Notification
+*/
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+
+  const targetUrl =
+    event.notification?.data?.url ||
+    new URL(
+      '?page=pending',
+      self.registration.scope
+    ).href;
+
+  event.waitUntil(
+    clients
+      .matchAll({
+        type: 'window',
+        includeUncontrolled: true
+      })
+      .then(windowClients => {
+        /*
+          ถ้า RegistrarPR เปิดอยู่แล้ว
+          ให้เปิดหน้าต่างเดิมและส่งคำสั่งไปยังหน้าเว็บ
+        */
+        for(const client of windowClients){
+          if(
+            client.url.startsWith(
+              self.registration.scope
+            )
+          ){
+            client.postMessage({
+              type: 'OPEN_PENDING_APPROVAL',
+              url: targetUrl
+            });
+
+            return client.focus();
+          }
+        }
+
+        /*
+          ถ้ายังไม่มี RegistrarPR เปิดอยู่
+          ให้เปิดหน้าใหม่
+        */
+        return clients.openWindow(targetUrl);
+      })
+  );
+});
