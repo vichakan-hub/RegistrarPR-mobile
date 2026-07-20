@@ -15,3 +15,76 @@ self.addEventListener('fetch', event => {
   if(event.request.method !== 'GET') return;
   event.respondWith(fetch(event.request).catch(() => caches.match(event.request).then(res => res || caches.match('./index.html'))));
 });
+
+/*
+  รับ Push Notification จาก RegistrarPR
+*/
+self.addEventListener('push', event => {
+  let payload = {};
+
+  try{
+    payload = event.data
+      ? event.data.json()
+      : {};
+  }catch(error){
+    payload = {
+      body: event.data
+        ? event.data.text()
+        : ''
+    };
+  }
+
+  const title =
+    payload.title ||
+    'RegistrarPR';
+
+  const iconUrl = new URL(
+    payload.icon || 'icons/icon-192.png',
+    self.registration.scope
+  ).href;
+
+  const badgeUrl = new URL(
+    payload.badge || 'icons/icon-192.png',
+    self.registration.scope
+  ).href;
+
+  const targetUrl = new URL(
+    payload.url || '?page=pending',
+    self.registration.scope
+  ).href;
+
+  const options = {
+    body:
+      payload.body ||
+      'มีผลสอบแก้ตัวรออนุมัติรายการใหม่',
+
+    icon: iconUrl,
+    badge: badgeUrl,
+
+    tag:
+      payload.tag ||
+      'registrar-pending-grade',
+
+    renotify: true,
+
+    vibrate: [
+      200,
+      100,
+      200
+    ],
+
+    data: {
+      url: targetUrl,
+      status:
+        payload.status ||
+        'pending_approval'
+    }
+  };
+
+  event.waitUntil(
+    self.registration.showNotification(
+      title,
+      options
+    )
+  );
+});
