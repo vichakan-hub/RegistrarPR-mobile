@@ -1193,6 +1193,44 @@ el('notificationToggle')
     );
 }
     function init(){bindEvents();resetSummary();if(restoreSession())setActiveTab('home');else setStatus('loginStatus','กรุณาเข้าสู่ระบบก่อนใช้งาน','info');}
+    function openPendingApprovalFromNotification(){
+  if(!state.currentUser){
+    /*
+      ยังไม่ได้เข้าสู่ระบบ
+      เก็บสถานะไว้ก่อน
+    */
+    sessionStorage.setItem(
+      'registrarOpenPendingAfterLogin',
+      'true'
+    );
+
+    return;
+  }
+
+  openApproval('pending_approval');
+
+  loadRows().catch(error=>{
+    console.error(
+      'เปิดรายการจาก Notification ไม่สำเร็จ',
+      error
+    );
+  });
+}
+
+
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.addEventListener(
+    'message',
+    event=>{
+      if(
+        event.data?.type ===
+        'OPEN_PENDING_APPROVAL'
+      ){
+        openPendingApprovalFromNotification();
+      }
+    }
+  );
+}
     document.addEventListener('DOMContentLoaded',init);
     if('serviceWorker' in navigator){window.addEventListener('load',()=>{navigator.serviceWorker.register('sw.js').then(()=>console.log('RegistrarPR mobile service worker registered')).catch(err=>console.warn('Service worker registration failed:',err));});}
   </script>
