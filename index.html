@@ -538,6 +538,60 @@ async function disablePushNotifications(){
   return true;
 }
 
+    async function togglePushNotifications(){
+  if(state.notificationBusy){
+    return;
+  }
+
+  try{
+    state.notificationBusy = true;
+    updateNotificationButton();
+
+    if(state.pushSubscription){
+      await disablePushNotifications();
+
+      showToast(
+        'ปิดการแจ้งเตือนแล้ว',
+        'อุปกรณ์เครื่องนี้จะไม่ได้รับแจ้งเตือนจาก RegistrarPR',
+        'success'
+      );
+
+      return;
+    }
+
+    await enablePushNotifications();
+
+    showToast(
+      'เปิดการแจ้งเตือนแล้ว',
+      'RegistrarPR จะแจ้งเตือนเมื่อมีครูส่งผลสอบแก้ตัวมาใหม่',
+      'success'
+    );
+
+  }catch(error){
+    console.error(
+      'togglePushNotifications ERROR',
+      error
+    );
+
+    const message =
+      error?.message ||
+      'ตั้งค่าการแจ้งเตือนไม่สำเร็จ';
+
+    showToast(
+      'ตั้งค่าการแจ้งเตือนไม่สำเร็จ',
+      message,
+      'error'
+    );
+
+  }finally{
+    state.notificationBusy = false;
+
+    await getExistingPushSubscription();
+
+    updateNotificationButton();
+  }
+}
+
 function updateNotificationButton(){
   const button = el('notificationBtn');
   const icon = el('notificationIcon');
