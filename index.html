@@ -80,6 +80,81 @@
   background:#e9f8ef;
   color:#0f9d58;
 }
+.notification-toggle-card{
+  width:100%;
+  background:#fff;
+  border:1px solid #e6edf5;
+  border-radius:24px;
+  padding:16px;
+  text-align:left;
+  box-shadow:0 6px 18px rgba(15,23,42,.04);
+  margin-top:12px;
+}
+
+.notification-toggle-content{
+  display:flex;
+  align-items:center;
+  gap:14px;
+}
+
+.notification-toggle-text{
+  flex:1;
+  min-width:0;
+}
+
+.toggle-switch{
+  position:relative;
+  width:54px;
+  height:32px;
+  flex:0 0 auto;
+  display:inline-block;
+}
+
+.toggle-switch input{
+  position:absolute;
+  opacity:0;
+  width:0;
+  height:0;
+}
+
+.toggle-slider{
+  position:absolute;
+  inset:0;
+  border-radius:999px;
+  background:#cbd5e1;
+  cursor:pointer;
+  transition:.2s ease;
+}
+
+.toggle-slider::before{
+  content:'';
+  position:absolute;
+  width:24px;
+  height:24px;
+  left:4px;
+  top:4px;
+  border-radius:50%;
+  background:#fff;
+  box-shadow:0 2px 8px rgba(15,23,42,.22);
+  transition:.2s ease;
+}
+
+.toggle-switch input:checked + .toggle-slider{
+  background:#0f9d58;
+}
+
+.toggle-switch input:checked + .toggle-slider::before{
+  transform:translateX(22px);
+}
+
+.toggle-switch input:focus-visible + .toggle-slider{
+  box-shadow:0 0 0 4px rgba(37,99,235,.18);
+}
+
+.toggle-switch input:disabled + .toggle-slider{
+  opacity:.55;
+  cursor:not-allowed;
+}
     
     .action-title{font-size:18px;font-weight:900;color:var(--text)}.action-text{font-size:13px;color:var(--muted);line-height:1.55;margin-top:3px;font-weight:650}
     .stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px}.stat-card{background:#fff;border:1px solid #edf2f7;border-radius:18px;padding:10px 6px;text-align:center;box-shadow:0 5px 14px rgba(15,23,42,.04)}.stat-value{font-size:20px;font-weight:900;color:#17324d}.stat-label{font-size:11px;font-weight:900;color:var(--muted);margin-top:1px;white-space:nowrap}
@@ -140,21 +215,45 @@
           <div class="home-brand-row"><img src="assets/school-logo.png" alt="ตราโรงเรียน" class="home-school-logo"><div><div class="kicker">RegistrarPR</div><div class="head-title" style="margin-top:4px;">วันนี้ต้องการทำอะไรครับ</div></div></div>
           <button id="goPendingBtn" class="action-card" type="button"><div class="action-inner"><div class="action-icon action-orange">⏳</div><div><div class="action-title">รายการรออนุมัติ</div><div class="action-text">ตรวจสอบและอนุมัติผลสอบแก้ตัวที่ครูส่งมา</div></div></div></button>
           <button id="goHistoryBtn" class="action-card" type="button"><div class="action-inner"><div class="action-icon action-blue">📋</div><div><div class="action-title">ประวัติรายการ</div><div class="action-text">ดูรายการอนุมัติแล้ว ไม่อนุมัติ หรือทั้งหมด</div></div></div></button>
-          <button id="notificationBtn" class="action-card" type="button">
-  <div class="action-inner">
-    <div id="notificationIcon" class="action-icon action-green">🔔</div>
+<div class="notification-toggle-card">
+  <div class="notification-toggle-content">
 
-    <div style="flex:1;">
-      <div id="notificationTitle" class="action-title">
-        เปิดการแจ้งเตือน
+    <div
+      id="notificationIcon"
+      class="action-icon action-green"
+    >
+      🔔
+    </div>
+
+    <div class="notification-toggle-text">
+      <div
+        id="notificationTitle"
+        class="action-title"
+      >
+        การแจ้งเตือน
       </div>
 
-      <div id="notificationText" class="action-text">
-        รับแจ้งเตือนเมื่อมีครูส่งผลสอบแก้ตัวมาใหม่
+      <div
+        id="notificationText"
+        class="action-text"
+      >
+        ปิดอยู่
       </div>
     </div>
+
+    <label class="toggle-switch">
+      <input
+        id="notificationToggle"
+        type="checkbox"
+        role="switch"
+        aria-label="เปิดหรือปิดการแจ้งเตือน"
+      >
+
+      <span class="toggle-slider"></span>
+    </label>
+
   </div>
-</button>
+</div>
         </div>
         <div class="card" style="margin-top:14px;background:#eff6ff;border-color:#dbeafe;"><div class="row-between"><div><div style="font-weight:900;color:#1d4ed8;">RegistrarPR Mobile</div><div class="student-sub" style="line-height:1.65;color:#1e40af;">เวอร์ชันมือถือสำหรับงานทะเบียน ใช้อนุมัติผลสอบแก้ตัวจากครูผู้สอน</div></div><div style="font-size:28px;">📱</div></div></div>
       </section>
@@ -538,8 +637,12 @@ async function disablePushNotifications(){
   return true;
 }
 
-    async function togglePushNotifications(){
+async function handleNotificationToggle(event){
+  const toggle = event.currentTarget;
+  const shouldEnable = Boolean(toggle.checked);
+
   if(state.notificationBusy){
+    updateNotificationButton();
     return;
   }
 
@@ -547,7 +650,16 @@ async function disablePushNotifications(){
     state.notificationBusy = true;
     updateNotificationButton();
 
-    if(state.pushSubscription){
+    if(shouldEnable){
+      await enablePushNotifications();
+
+      showToast(
+        'เปิดการแจ้งเตือนแล้ว',
+        'RegistrarPR จะแจ้งเตือนเมื่อมีครูส่งผลสอบแก้ตัวมาใหม่',
+        'success'
+      );
+
+    }else{
       await disablePushNotifications();
 
       showToast(
@@ -555,31 +667,18 @@ async function disablePushNotifications(){
         'อุปกรณ์เครื่องนี้จะไม่ได้รับแจ้งเตือนจาก RegistrarPR',
         'success'
       );
-
-      return;
     }
-
-    await enablePushNotifications();
-
-    showToast(
-      'เปิดการแจ้งเตือนแล้ว',
-      'RegistrarPR จะแจ้งเตือนเมื่อมีครูส่งผลสอบแก้ตัวมาใหม่',
-      'success'
-    );
 
   }catch(error){
     console.error(
-      'togglePushNotifications ERROR',
+      'handleNotificationToggle ERROR',
       error
     );
 
-    const message =
-      error?.message ||
-      'ตั้งค่าการแจ้งเตือนไม่สำเร็จ';
-
     showToast(
       'ตั้งค่าการแจ้งเตือนไม่สำเร็จ',
-      message,
+      error?.message ||
+      'เกิดข้อผิดพลาดในการตั้งค่าการแจ้งเตือน',
       'error'
     );
 
@@ -593,59 +692,63 @@ async function disablePushNotifications(){
 }
 
 function updateNotificationButton(){
-  const button = el('notificationBtn');
+  const toggle = el('notificationToggle');
   const icon = el('notificationIcon');
   const title = el('notificationTitle');
   const text = el('notificationText');
 
-  if(!button || !icon || !title || !text){
+  if(!toggle || !icon || !title || !text){
     return;
   }
 
   if(!isPushNotificationSupported()){
-    button.disabled = true;
+    toggle.checked = false;
+    toggle.disabled = true;
+
     icon.textContent = '🔕';
-    title.textContent = 'อุปกรณ์ไม่รองรับการแจ้งเตือน';
+    title.textContent = 'อุปกรณ์ไม่รองรับ';
     text.textContent =
-      'กรุณาเปิดด้วย Chrome, Edge หรือเพิ่มแอปไว้บนหน้าจอโฮม';
+      'กรุณาเปิดด้วย Chrome, Edge หรือ PWA';
 
     return;
   }
 
   if(Notification.permission === 'denied'){
-    button.disabled = true;
+    toggle.checked = false;
+    toggle.disabled = true;
+
     icon.textContent = '🚫';
     title.textContent = 'การแจ้งเตือนถูกบล็อก';
     text.textContent =
-      'กรุณาอนุญาตการแจ้งเตือนจากการตั้งค่าเว็บไซต์ของเบราว์เซอร์';
+      'กรุณาอนุญาตจากการตั้งค่าเว็บไซต์';
 
     return;
   }
 
   if(state.notificationBusy){
-    button.disabled = true;
+    toggle.disabled = true;
+
     icon.textContent = '⏳';
-    title.textContent = 'กำลังตั้งค่าการแจ้งเตือน';
+    title.textContent = 'กำลังตั้งค่า';
     text.textContent = 'กรุณารอสักครู่';
 
     return;
   }
 
-  button.disabled = false;
+  toggle.disabled = false;
+  toggle.checked = Boolean(state.pushSubscription);
 
   if(state.pushSubscription){
     icon.textContent = '🔔';
-    title.textContent = 'เปิดการแจ้งเตือนแล้ว';
-    text.textContent =
-      'แตะเพื่อปิดการแจ้งเตือนของอุปกรณ์เครื่องนี้';
+    title.textContent = 'การแจ้งเตือน';
+    text.textContent = 'เปิดอยู่';
 
     return;
   }
 
-  icon.textContent = '🔔';
-  title.textContent = 'เปิดการแจ้งเตือน';
-  text.textContent =
-    'รับแจ้งเตือนเมื่อมีครูส่งผลสอบแก้ตัวมาใหม่';
+  icon.textContent = '🔕';
+  title.textContent = 'การแจ้งเตือน';
+  text.textContent = 'ปิดอยู่';
 }
 
     async function loginWithRegistrarRpc(teacherCodeRaw,passwordRaw){
@@ -1040,11 +1143,11 @@ function showApp(){
   /*
     ปุ่มเปิดและปิด Push Notification
   */
-  el('notificationBtn')
-    .addEventListener(
-      'click',
-      togglePushNotifications
-    );
+el('notificationToggle')
+  .addEventListener(
+    'change',
+    handleNotificationToggle
+  );
 
   el('navHomeBtn')
     .addEventListener('click', ()=>{
