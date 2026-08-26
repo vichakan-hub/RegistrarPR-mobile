@@ -298,18 +298,41 @@ const VAPID_PUBLIC_KEY =
 
 const REGISTRAR_PUSH_ENDPOINT_KEY =
   'registrarPushEndpoint';
-const REGISTRAR_SESSION_KEY='registrarMobileUser';
-const REGISTRAR_REMEMBER_KEY='registrarMobileRememberedUser';
-const REGISTRAR_REMEMBER_DAYS=30;
+const REGISTRAR_SESSION_KEY =
+  'registrarMobileUser';
+
+const REGISTRAR_TOKEN_SESSION_KEY =
+  'registrarMobileSessionToken';
+
+const REGISTRAR_EXPIRES_SESSION_KEY =
+  'registrarMobileSessionExpiresAt';
+
+
+const REGISTRAR_REMEMBER_KEY =
+  'registrarMobileRememberedUser';
+
+const REGISTRAR_REMEMBER_TOKEN_KEY =
+  'registrarMobileRememberedToken';
+
+const REGISTRAR_REMEMBER_EXPIRES_KEY =
+  'registrarMobileRememberedExpiresAt';
+
+const REGISTRAR_REMEMBER_DAYS = 30;
 
 const state={
+
   currentUser:null,
+
+  registrarSessionToken:null,
+  registrarSessionExpiresAt:null,
+
   rows:[],
   rejectingId:null,
   rememberMe:false,
 
   pushSubscription:null,
   notificationBusy:false
+
 };
 
     function escapeHtml(text){return String(text??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'","&#039;");}
@@ -751,18 +774,216 @@ function updateNotificationButton(){
   text.textContent = 'ปิดอยู่';
 }
 
-    async function loginWithRegistrarRpc(teacherCodeRaw,passwordRaw){
-      const teacherCode=normalizeTeacherCode(teacherCodeRaw), password=String(passwordRaw||'').trim();
-      if(!teacherCode)throw new Error('กรุณากรอกรหัสผู้ใช้');
-      if(!isRegistrarPageAllowed(teacherCode))throw new Error('หน้านี้อนุญาตเฉพาะผู้ใช้รหัส G เท่านั้น');
-      if(!password)throw new Error('กรุณากรอกรหัสผ่าน');
-      const {data,error}=await supabaseClient.rpc('login_teacher',{p_teacher_code:teacherCode,p_password:password});
-      if(error)throw error;
-      if(!data||data.ok!==true||!data.user)throw new Error(data?.message||'รหัสผู้ใช้หรือรหัสผ่านไม่ถูกต้อง');
-      const user=data.user||{}, code=String(user.teacher_code||'').trim().toUpperCase();
-      if(!isRegistrarPageAllowed(code))throw new Error('บัญชีนี้ไม่มีสิทธิ์เข้าใช้งานหน้านี้');
-      return {id:user.id||'',teacher_code:user.teacher_code||'',first_name:user.first_name||'',last_name:user.last_name||'',full_name:user.full_name||[user.first_name||'',user.last_name||''].join(' ').trim()||user.teacher_code,role_prefix:code.charAt(0),teacher_role:user.teacher_role||'registrar',is_active:user.is_active!==false};
+async function loginWithRegistrarRpc(
+  teacherCodeRaw,
+  passwordRaw
+){
+
+  const teacherCode =
+    normalizeTeacherCode(
+      teacherCodeRaw
+    );
+
+
+  const password =
+    String(
+      passwordRaw || ''
+    );
+
+
+  if(!teacherCode){
+
+    throw new Error(
+      'กรุณากรอกรหัสผู้ใช้'
+    );
+
+  }
+
+
+  if(
+    !isRegistrarPageAllowed(
+      teacherCode
+    )
+  ){
+
+    throw new Error(
+      'หน้านี้อนุญาตเฉพาะผู้ใช้รหัส G เท่านั้น'
+    );
+
+  }
+
+
+  if(!password){
+
+    throw new Error(
+      'กรุณากรอกรหัสผ่าน'
+    );
+
+  }
+
+
+  /*
+   * =====================================================
+   * Login ผ่าน DB-verifiable Session
+   * =====================================================
+   */
+
+  const { data, error } =
+    await supabaseClient.rpc(
+      'login_teacher_session',
+      {
+
+        p_teacher_code:
+          teacherCode,
+
+        p_password:
+          password
+
+      }
+    );
+
+
+  if(error){
+
+    throw error;
+
+  }
+
+
+  const result =
+    Array.isArray(data)
+      ? data[0]
+      : data;
+
+
+  if(
+    !result ||
+    result.ok !== true ||
+    !result.user ||
+    !result.session_token
+  ){
+
+    throw new Error(
+      result?.message ||
+      'รหัสผู้ใช้หรือรหัสผ่านไม่ถูกต้อง'
+    );
+
+  }
+
+
+  const user =
+    result.user || {};
+
+
+  const code =
+    normalizeTeacherCode(
+      user.teacher_code || ''
+    );
+
+
+  /*
+   * =====================================================
+   * RegistrarPR ใช้เฉพาะ Admin / G
+   * =====================================================
+   */
+
+  if(
+    !isRegistrarPageAllowed(code) ||
+    (
+      user.account_type &&
+      String(
+        user.account_type
+      ) !== 'admin'
+    )
+  ){
+
+    /*
+     * Login สำเร็จแต่ไม่ใช่ Admin
+     * ต้อง revoke token ที่เพิ่งสร้างทันที
+     */
+
+    try{
+
+      await supabaseClient.rpc(
+        'logout_teacher_session',
+        {
+          p_token:
+            result.session_token
+        }
+      );
+
+    }catch(logoutError){
+
+      console.warn(
+        'REGISTRAR INVALID ROLE LOGOUT ERROR',
+        logoutError
+      );
+
     }
+
+
+    throw new Error(
+      'บัญชีนี้ไม่มีสิทธิ์เข้าใช้งาน RegistrarPR'
+    );
+
+  }
+
+
+  return {
+
+    ok:true,
+
+
+    user:{
+
+      id:
+        user.id || '',
+
+      teacher_code:
+        code,
+
+      first_name:
+        user.first_name || '',
+
+      last_name:
+        user.last_name || '',
+
+      full_name:
+        user.full_name ||
+        [
+          user.first_name || '',
+          user.last_name || ''
+        ]
+          .join(' ')
+          .trim() ||
+        code,
+
+      account_type:
+        user.account_type ||
+        'admin',
+
+      role_prefix:
+        'G',
+
+      teacher_role:
+        'registrar',
+
+      is_active:
+        true
+
+    },
+
+
+    sessionToken:
+      result.session_token,
+
+
+    expiresAt:
+      result.expires_at || null
+
+  };
+
+}
 
    function clearStoredSession(){
   sessionStorage.removeItem(REGISTRAR_SESSION_KEY);
@@ -883,25 +1104,48 @@ function showApp(){
 
     showLoading('กำลังเข้าสู่ระบบ...');
 
-    const user = await loginWithRegistrarRpc(
-      el('loginTeacherCode').value,
-      el('loginPassword').value
-    );
+const result =
+  await loginWithRegistrarRpc(
+    el('loginTeacherCode').value,
+    el('loginPassword').value
+  );
 
-    state.currentUser = user;
-    state.rememberMe = Boolean(el('rememberMe')?.checked);
 
-    saveSession();
+state.currentUser =
+  result.user;
+
+
+state.registrarSessionToken =
+  result.sessionToken;
+
+
+state.registrarSessionExpiresAt =
+  result.expiresAt;
+
+
+state.rememberMe =
+  Boolean(
+    el('rememberMe')?.checked
+  );
+
+
+saveSession();
     showApp();
     setActiveTab('home');
 
-    showToast(
-      'เข้าสู่ระบบสำเร็จ',
-      state.rememberMe
-        ? `ยินดีต้อนรับ ${user.full_name||user.teacher_code} ระบบจะจดจำการเข้าสู่ระบบไว้ 30 วัน`
-        : `ยินดีต้อนรับ ${user.full_name||user.teacher_code}`,
-      'success'
-    );
+showToast(
+  'เข้าสู่ระบบสำเร็จ',
+  state.rememberMe
+    ? `ยินดีต้อนรับ ${
+        state.currentUser.full_name ||
+        state.currentUser.teacher_code
+      }`
+    : `ยินดีต้อนรับ ${
+        state.currentUser.full_name ||
+        state.currentUser.teacher_code
+      }`,
+  'success'
+);
 
   }catch(err){
     const msg =
