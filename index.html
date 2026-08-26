@@ -985,94 +985,514 @@ async function loginWithRegistrarRpc(
 
 }
 
-   function clearStoredSession(){
-  sessionStorage.removeItem(REGISTRAR_SESSION_KEY);
-  localStorage.removeItem(REGISTRAR_REMEMBER_KEY);
+function clearStoredSession(){
+
+  /*
+   * =====================================================
+   * Session แบบชั่วคราว
+   * =====================================================
+   */
+
+  sessionStorage.removeItem(
+    REGISTRAR_SESSION_KEY
+  );
+
+  sessionStorage.removeItem(
+    REGISTRAR_TOKEN_SESSION_KEY
+  );
+
+  sessionStorage.removeItem(
+    REGISTRAR_EXPIRES_SESSION_KEY
+  );
+
+
+  /*
+   * =====================================================
+   * Remember Me
+   * =====================================================
+   */
+
+  localStorage.removeItem(
+    REGISTRAR_REMEMBER_KEY
+  );
+
+  localStorage.removeItem(
+    REGISTRAR_REMEMBER_TOKEN_KEY
+  );
+
+  localStorage.removeItem(
+    REGISTRAR_REMEMBER_EXPIRES_KEY
+  );
+
 }
 
 function saveSession(){
-  if(!state.currentUser) return;
 
-  if(state.rememberMe){
-    const expiresAt =
-      Date.now() + (REGISTRAR_REMEMBER_DAYS * 24 * 60 * 60 * 1000);
+  /*
+   * =====================================================
+   * 1) ต้องมี Token จริงจาก Database
+   * =====================================================
+   */
 
-    localStorage.setItem(
-      REGISTRAR_REMEMBER_KEY,
-      JSON.stringify({
-        user:state.currentUser,
-        expiresAt
-      })
+  const token =
+    String(
+      state.registrarSessionToken || ''
+    ).trim();
+
+
+  if(!token){
+
+    console.warn(
+      'SAVE REGISTRAR SESSION SKIPPED: missing token'
     );
 
-    sessionStorage.removeItem(REGISTRAR_SESSION_KEY);
     return;
+
   }
 
-  sessionStorage.setItem(
-    REGISTRAR_SESSION_KEY,
-    JSON.stringify(state.currentUser)
+
+  /*
+   * expiresAt นี้มาจาก login_teacher_session()
+   * Database เป็นผู้กำหนด
+   */
+  const expiresAt =
+    state.registrarSessionExpiresAt
+      ? String(
+          state.registrarSessionExpiresAt
+        )
+      : '';
+
+
+  /*
+   * =====================================================
+   * 2) ล้างรูปแบบ Session เก่า
+   *
+   * ไม่เก็บ currentUser ลง Storage อีกแล้ว
+   * =====================================================
+   */
+
+  sessionStorage.removeItem(
+    REGISTRAR_SESSION_KEY
   );
 
-  localStorage.removeItem(REGISTRAR_REMEMBER_KEY);
+  localStorage.removeItem(
+    REGISTRAR_REMEMBER_KEY
+  );
+
+
+  /*
+   * =====================================================
+   * 3) Remember Me
+   *
+   * เก็บเฉพาะ opaque token + expires_at
+   * ใน localStorage
+   * =====================================================
+   */
+
+  if(state.rememberMe){
+
+    localStorage.setItem(
+      REGISTRAR_REMEMBER_TOKEN_KEY,
+      token
+    );
+
+
+    if(expiresAt){
+
+      localStorage.setItem(
+        REGISTRAR_REMEMBER_EXPIRES_KEY,
+        expiresAt
+      );
+
+    }else{
+
+      localStorage.removeItem(
+        REGISTRAR_REMEMBER_EXPIRES_KEY
+      );
+
+    }
+
+
+    /*
+     * ห้ามเหลือ token ซ้ำใน sessionStorage
+     */
+    sessionStorage.removeItem(
+      REGISTRAR_TOKEN_SESSION_KEY
+    );
+
+    sessionStorage.removeItem(
+      REGISTRAR_EXPIRES_SESSION_KEY
+    );
+
+
+    return;
+
+  }
+
+
+  /*
+   * =====================================================
+   * 4) ไม่เลือก Remember Me
+   *
+   * เก็บ opaque token เฉพาะ sessionStorage
+   * ปิด Browser แล้วหาย
+   * =====================================================
+   */
+
+  sessionStorage.setItem(
+    REGISTRAR_TOKEN_SESSION_KEY,
+    token
+  );
+
+
+  if(expiresAt){
+
+    sessionStorage.setItem(
+      REGISTRAR_EXPIRES_SESSION_KEY,
+      expiresAt
+    );
+
+  }else{
+
+    sessionStorage.removeItem(
+      REGISTRAR_EXPIRES_SESSION_KEY
+    );
+
+  }
+
+
+  /*
+   * ห้ามเหลือ token ใน localStorage
+   */
+  localStorage.removeItem(
+    REGISTRAR_REMEMBER_TOKEN_KEY
+  );
+
+  localStorage.removeItem(
+    REGISTRAR_REMEMBER_EXPIRES_KEY
+  );
+
 }
 
-function restoreSession(){
+async function restoreSession(){
+
   try{
-    const rememberedRaw =
-      localStorage.getItem(REGISTRAR_REMEMBER_KEY);
 
-    if(rememberedRaw){
-      const rememberedData = JSON.parse(rememberedRaw);
-      const rememberedUser = rememberedData?.user;
-      const expiresAt = Number(rememberedData?.expiresAt || 0);
+    /*
+     * =====================================================
+     * 1) หา Token ที่ Browser เก็บไว้
+     *
+     * Remember Me  → localStorage
+     * ปกติ         → sessionStorage
+     *
+     * ยังไม่เชื่อว่า Token นี้ใช้ได้
+     * จนกว่า Database จะยืนยัน
+     * =====================================================
+     */
 
-      if(
-        rememberedUser &&
-        expiresAt > Date.now() &&
-        isRegistrarPageAllowed(rememberedUser.teacher_code)
-      ){
-        state.currentUser = rememberedUser;
-        state.rememberMe = true;
+    const rememberedToken =
+      String(
+        localStorage.getItem(
+          REGISTRAR_REMEMBER_TOKEN_KEY
+        ) || ''
+      ).trim();
 
-        if(el('rememberMe')){
-          el('rememberMe').checked = true;
-        }
 
-        showApp();
-        return true;
+    const sessionToken =
+      String(
+        sessionStorage.getItem(
+          REGISTRAR_TOKEN_SESSION_KEY
+        ) || ''
+      ).trim();
+
+
+    let token = '';
+    let rememberMode = false;
+
+
+    if(rememberedToken){
+
+      token = rememberedToken;
+      rememberMode = true;
+
+    }else if(sessionToken){
+
+      token = sessionToken;
+      rememberMode = false;
+
+    }
+
+
+    /*
+     * =====================================================
+     * 2) ไม่มี Token
+     * =====================================================
+     */
+
+    if(!token){
+
+      state.currentUser = null;
+
+      state.registrarSessionToken = null;
+
+      state.registrarSessionExpiresAt = null;
+
+      state.rememberMe = false;
+
+
+      clearStoredSession();
+
+
+      if(el('rememberMe')){
+        el('rememberMe').checked = false;
       }
 
-      localStorage.removeItem(REGISTRAR_REMEMBER_KEY);
-    }
 
-    const sessionRaw =
-      sessionStorage.getItem(REGISTRAR_SESSION_KEY);
-
-    if(!sessionRaw) return false;
-
-    const sessionUser = JSON.parse(sessionRaw);
-
-    if(!isRegistrarPageAllowed(sessionUser?.teacher_code)){
-      sessionStorage.removeItem(REGISTRAR_SESSION_KEY);
       return false;
+
     }
 
-    state.currentUser = sessionUser;
+
+    /*
+     * =====================================================
+     * 3) ตรวจ Token กับ Database
+     *
+     * Browser ไม่มีสิทธิ์สร้าง currentUser เอง
+     * =====================================================
+     */
+
+    const { data, error } =
+      await supabaseClient.rpc(
+        'get_teacher_session_context',
+        {
+          p_token: token
+        }
+      );
+
+
+    if(error){
+
+      throw error;
+
+    }
+
+
+    const result =
+      Array.isArray(data)
+        ? data[0]
+        : data;
+
+
+    /*
+     * =====================================================
+     * 4) Session ไม่ถูกต้อง / หมดอายุ / ถูก revoke
+     * =====================================================
+     */
+
+    if(
+      !result ||
+      result.ok !== true ||
+      !result.user
+    ){
+
+      state.currentUser = null;
+
+      state.registrarSessionToken = null;
+
+      state.registrarSessionExpiresAt = null;
+
+      state.rememberMe = false;
+
+
+      clearStoredSession();
+
+
+      if(el('rememberMe')){
+        el('rememberMe').checked = false;
+      }
+
+
+      return false;
+
+    }
+
+
+    /*
+     * =====================================================
+     * 5) User ต้องมาจาก Database เท่านั้น
+     * =====================================================
+     */
+
+    const user =
+      result.user || {};
+
+
+    const code =
+      normalizeTeacherCode(
+        user.teacher_code || ''
+      );
+
+
+    /*
+     * RegistrarPR อนุญาตเฉพาะ G / admin
+     */
+
+    if(
+      !isRegistrarPageAllowed(code) ||
+      (
+        user.account_type &&
+        String(
+          user.account_type
+        ) !== 'admin'
+      )
+    ){
+
+      state.currentUser = null;
+
+      state.registrarSessionToken = null;
+
+      state.registrarSessionExpiresAt = null;
+
+      state.rememberMe = false;
+
+
+      clearStoredSession();
+
+
+      if(el('rememberMe')){
+        el('rememberMe').checked = false;
+      }
+
+
+      return false;
+
+    }
+
+
+    /*
+     * =====================================================
+     * 6) สร้าง State จากข้อมูลที่ Database ยืนยันแล้ว
+     * =====================================================
+     */
+
+    state.currentUser = {
+
+      id:
+        user.id || '',
+
+      teacher_code:
+        code,
+
+      first_name:
+        user.first_name || '',
+
+      last_name:
+        user.last_name || '',
+
+      full_name:
+        user.full_name ||
+        [
+          user.first_name || '',
+          user.last_name || ''
+        ]
+          .join(' ')
+          .trim() ||
+        code,
+
+      account_type:
+        user.account_type ||
+        'admin',
+
+      role_prefix:
+        'G',
+
+      teacher_role:
+        'registrar',
+
+      is_active:
+        true
+
+    };
+
+
+    state.registrarSessionToken =
+      token;
+
+
+    /*
+     * expires_at ต้องเอาจาก Database
+     * ไม่ใช้ค่าที่ Browser เคยเก็บเป็นหลักฐาน
+     */
+
+    state.registrarSessionExpiresAt =
+      result.expires_at || null;
+
+
+    state.rememberMe =
+      rememberMode;
+
+
+    if(el('rememberMe')){
+
+      el('rememberMe').checked =
+        rememberMode;
+
+    }
+
+
+    /*
+     * =====================================================
+     * 7) Normalize Storage
+     *
+     * saveSession() จะเก็บเพียง
+     * token + expires_at ตามโหมดที่ใช้อยู่
+     * =====================================================
+     */
+
+    saveSession();
+
+
+    /*
+     * =====================================================
+     * 8) เปิด Application หลัง Database ยืนยันแล้วเท่านั้น
+     * =====================================================
+     */
+
+    showApp();
+
+
+    return true;
+
+
+  }catch(error){
+
+    console.warn(
+      'RESTORE REGISTRAR SESSION ERROR',
+      error
+    );
+
+
+    state.currentUser = null;
+
+    state.registrarSessionToken = null;
+
+    state.registrarSessionExpiresAt = null;
+
     state.rememberMe = false;
+
+
+    clearStoredSession();
+
 
     if(el('rememberMe')){
       el('rememberMe').checked = false;
     }
 
-    showApp();
-    return true;
 
-  }catch(error){
-    console.warn('restoreSession ERROR',error);
-    clearStoredSession();
     return false;
+
   }
+
 }
 function showApp(){
   el('loginView').classList.add('hidden');
@@ -1436,7 +1856,44 @@ el('notificationToggle')
       confirmReject
     );
 }
-    function init(){bindEvents();resetSummary();if(restoreSession())setActiveTab('home');else setStatus('loginStatus','กรุณาเข้าสู่ระบบก่อนใช้งาน','info');}
+    async function init(){
+
+  bindEvents();
+
+  resetSummary();
+
+
+  const restored =
+    await restoreSession();
+
+
+  if(restored){
+
+    setActiveTab('home');
+
+  }else{
+
+    el('appView')
+      .classList.add('hidden');
+
+
+    el('bottomNav')
+      .classList.add('hidden');
+
+
+    el('loginView')
+      .classList.remove('hidden');
+
+
+    setStatus(
+      'loginStatus',
+      'กรุณาเข้าสู่ระบบก่อนใช้งาน',
+      'info'
+    );
+
+  }
+
+}
     function openPendingApprovalFromNotification(){
   if(!state.currentUser){
     /*
