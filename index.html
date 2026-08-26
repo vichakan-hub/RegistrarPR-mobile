@@ -1578,32 +1578,160 @@ showToast(
     hideLoading();
   }
 }
-    function logout(){
+async function logout(){
+
+  /*
+   * =====================================================
+   * 1) เก็บ Token ก่อนล้าง State
+   * =====================================================
+   */
+
+  const token =
+    String(
+      state.registrarSessionToken ||
+      localStorage.getItem(
+        REGISTRAR_REMEMBER_TOKEN_KEY
+      ) ||
+      sessionStorage.getItem(
+        REGISTRAR_TOKEN_SESSION_KEY
+      ) ||
+      ''
+    ).trim();
+
+
+  /*
+   * =====================================================
+   * 2) Revoke Session ที่ Database
+   *
+   * ถ้า network มีปัญหา
+   * ยังต้อง logout ฝั่ง Browser ต่อ
+   * =====================================================
+   */
+
+  if(token){
+
+    try{
+
+      const { data, error } =
+        await supabaseClient.rpc(
+          'logout_teacher_session',
+          {
+            p_token: token
+          }
+        );
+
+
+      if(error){
+        throw error;
+      }
+
+
+      if(
+        data &&
+        data.ok === false
+      ){
+
+        console.warn(
+          'REGISTRAR LOGOUT RPC WARNING',
+          data.message || data
+        );
+
+      }
+
+    }catch(error){
+
+      console.warn(
+        'REGISTRAR SESSION REVOKE ERROR',
+        error
+      );
+
+    }
+
+  }
+
+
+  /*
+   * =====================================================
+   * 3) ล้าง State
+   * =====================================================
+   */
+
   state.currentUser = null;
+
+  state.registrarSessionToken = null;
+
+  state.registrarSessionExpiresAt = null;
+
   state.rows = [];
+
   state.rejectingId = null;
+
   state.rememberMe = false;
+
+
+  /*
+   * =====================================================
+   * 4) ล้าง Session Storage / Local Storage
+   * =====================================================
+   */
 
   clearStoredSession();
 
-  el('appView').classList.add('hidden');
-  el('bottomNav').classList.add('hidden');
-  el('loginView').classList.remove('hidden');
 
-  el('loginTeacherCode').value = '';
-  el('loginPassword').value = '';
+  /*
+   * =====================================================
+   * 5) กลับหน้า Login
+   * =====================================================
+   */
 
-  if(el('rememberMe')){
-    el('rememberMe').checked = false;
+  el('appView')
+    .classList.add('hidden');
+
+
+  el('bottomNav')
+    .classList.add('hidden');
+
+
+  el('loginView')
+    .classList.remove('hidden');
+
+
+  if(el('loginTeacherCode')){
+
+    el('loginTeacherCode').value = '';
+
   }
 
+
+  if(el('loginPassword')){
+
+    el('loginPassword').value = '';
+
+  }
+
+
+  if(el('rememberMe')){
+
+    el('rememberMe').checked = false;
+
+  }
+
+
+  /*
+   * =====================================================
+   * 6) Reset รายการที่โหลดไว้
+   * =====================================================
+   */
+
   resetList();
+
 
   setStatus(
     'loginStatus',
     'ออกจากระบบแล้ว',
     'info'
   );
+
 }
     function setActiveTab(tab){el('homeView').classList.toggle('hidden',tab!=='home');el('approvalView').classList.toggle('hidden',tab!=='approval');el('navHomeBtn').classList.toggle('active',tab==='home');el('navPendingBtn').classList.toggle('active',tab==='approval'&&el('filterStatus').value==='pending_approval');el('navHistoryBtn').classList.toggle('active',tab==='approval'&&el('filterStatus').value!=='pending_approval');}
     function openApproval(status){el('filterStatus').value=status;setActiveTab('approval');resetList();setStatus('listStatus','กรุณากดแสดงรายการ','info');}
