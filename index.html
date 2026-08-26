@@ -2071,7 +2071,238 @@ async function approveRequest(requestId){
     function openRejectModal(requestId){const row=getRowById(requestId);if(!row){showToast('ไม่พบรายการ','ไม่พบรายการที่ต้องการไม่อนุมัติ','error');return;}state.rejectingId=requestId;el('rejectReasonInput').value='';el('rejectModalSub').textContent=`${safeText(row.student_name,'-')} • ${safeText(row.subject_code,'-')}`;el('rejectModal').classList.add('show');}
     function closeRejectModal(){state.rejectingId=null;el('rejectModal').classList.remove('show');el('rejectReasonInput').value='';}
     async function confirmReject(){await rejectRequest(state.rejectingId,safeText(el('rejectReasonInput').value,''));}
-    async function rejectRequest(requestId,reason){try{const row=getRowById(requestId);if(!row)throw new Error('ไม่พบรายการที่ต้องการไม่อนุมัติ');if(row.status!=='pending_approval')throw new Error('รายการนี้ไม่ได้อยู่ในสถานะรออนุมัติ');if(!reason)throw new Error('กรุณาระบุเหตุผลที่ไม่อนุมัติ');const rejectedAt=new Date().toISOString();showLoading('กำลังบันทึกผลไม่อนุมัติ...');setStatus('listStatus','กำลังบันทึกผลไม่อนุมัติ...','info');const {error}=await supabaseClient.from('grade_retest_requests').update({status:'rejected',rejected_at:rejectedAt,rejected_by:state.currentUser.id,rejected_reason:reason,updated_at:rejectedAt}).eq('id',requestId).eq('status','pending_approval').eq('is_active',true);if(error)throw error;closeRejectModal();showToast('บันทึกไม่อนุมัติแล้ว',`รายการของ ${row.student_name} ถูกเปลี่ยนเป็นไม่อนุมัติ`,'success');await loadRows();}catch(err){console.error('rejectRequest ERROR',err);const msg=err?.message||'บันทึกไม่อนุมัติไม่สำเร็จ';setStatus('listStatus',msg,'error');showToast('ไม่อนุมัติไม่สำเร็จ',msg,'error');}finally{hideLoading();}}
+    async function rejectRequest(
+  requestId,
+  reason
+){
+
+  try{
+
+    /*
+     * =====================================================
+     * 1) ตรวจรายการจากหน้าจอ
+     * =====================================================
+     */
+
+    const row =
+      getRowById(requestId);
+
+
+    if(!row){
+
+      throw new Error(
+        'ไม่พบรายการที่ต้องการไม่อนุมัติ'
+      );
+
+    }
+
+
+    if(
+      row.status !==
+      'pending_approval'
+    ){
+
+      throw new Error(
+        'รายการนี้ไม่ได้อยู่ในสถานะรออนุมัติ'
+      );
+
+    }
+
+
+    /*
+     * =====================================================
+     * 2) ตรวจเหตุผล
+     * =====================================================
+     */
+
+    const rejectReason =
+      safeText(
+        reason,
+        ''
+      );
+
+
+    if(!rejectReason){
+
+      throw new Error(
+        'กรุณาระบุเหตุผลที่ไม่อนุมัติ'
+      );
+
+    }
+
+
+    /*
+     * =====================================================
+     * 3) ตรวจ Registrar Session Token
+     * =====================================================
+     */
+
+    const token =
+      String(
+        state.registrarSessionToken || ''
+      ).trim();
+
+
+    if(!token){
+
+      throw new Error(
+        'Session หมดอายุ กรุณาเข้าสู่ระบบใหม่'
+      );
+
+    }
+
+
+    /*
+     * =====================================================
+     * 4) แสดงสถานะ
+     * =====================================================
+     */
+
+    showLoading(
+      'กำลังบันทึกผลไม่อนุมัติ...'
+    );
+
+
+    setStatus(
+      'listStatus',
+      'กำลังบันทึกผลไม่อนุมัติ...',
+      'info'
+    );
+
+
+    /*
+     * =====================================================
+     * 5) เรียก Session-secured RPC
+     *
+     * Browser ส่งเพียง:
+     * - Session Token
+     * - Request ID
+     * - เหตุผล
+     *
+     * rejected_by / rejected_at / status
+     * ให้ Database เป็นผู้กำหนด
+     * =====================================================
+     */
+
+    const { data, error } =
+      await supabaseClient.rpc(
+        'registrar_reject_retest_request_session',
+        {
+
+          p_token:
+            token,
+
+          p_request_id:
+            requestId,
+
+          p_reason:
+            rejectReason
+
+        }
+      );
+
+
+    if(error){
+
+      throw error;
+
+    }
+
+
+    const result =
+      Array.isArray(data)
+        ? data[0]
+        : data;
+
+
+    if(
+      !result ||
+      result.ok !== true
+    ){
+
+      throw new Error(
+        result?.message ||
+        'บันทึกผลไม่อนุมัติไม่สำเร็จ'
+      );
+
+    }
+
+
+    /*
+     * =====================================================
+     * 6) สำเร็จแล้วจึงปิด Modal
+     * =====================================================
+     */
+
+    closeRejectModal();
+
+
+    /*
+     * =====================================================
+     * 7) แจ้งผล
+     * =====================================================
+     */
+
+    const studentName =
+      safeText(
+        result.student_name ||
+        row.student_name,
+        '-'
+      );
+
+
+    showToast(
+      'บันทึกไม่อนุมัติแล้ว',
+      `รายการของ ${studentName} ถูกเปลี่ยนเป็นไม่อนุมัติ`,
+      'success'
+    );
+
+
+    /*
+     * =====================================================
+     * 8) โหลดข้อมูลล่าสุดจาก Database
+     * =====================================================
+     */
+
+    await loadRows();
+
+
+  }catch(err){
+
+    console.error(
+      'rejectRequest ERROR',
+      err
+    );
+
+
+    const msg =
+      err?.message ||
+      err?.details ||
+      err?.hint ||
+      'บันทึกไม่อนุมัติไม่สำเร็จ';
+
+
+    setStatus(
+      'listStatus',
+      msg,
+      'error'
+    );
+
+
+    showToast(
+      'ไม่อนุมัติไม่สำเร็จ',
+      msg,
+      'error'
+    );
+
+
+  }finally{
+
+    hideLoading();
+
+  }
+
+}
 
    function bindEvents(){
   el('loginBtn')
