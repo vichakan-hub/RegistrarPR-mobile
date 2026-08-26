@@ -1822,80 +1822,252 @@ async function logout(){
       return { ok:true, message:'อัปเดต cache สำเร็จ' };
     }
 
-    async function approveRequest(requestId){
-      try{
-        const row = getRowById(requestId);
-        if(!row) throw new Error('ไม่พบรายการที่ต้องการอนุมัติ');
-        if(row.status !== 'pending_approval') throw new Error('รายการนี้ไม่ได้อยู่ในสถานะรออนุมัติ');
-        if(!row.grade_result_id) throw new Error('ไม่พบ grade_result_id');
+async function approveRequest(requestId){
 
-        const approvedAt = new Date().toISOString();
-        const approvedGrade = normalizeGradeValue(row.requested_retest_grade_code);
-        if(!approvedGrade) throw new Error('ไม่พบผลสอบแก้ตัวที่ต้องการอนุมัติ');
+  try{
 
-        showLoading('กำลังอนุมัติผลสอบแก้ตัว...');
-        setStatus('listStatus','กำลังอนุมัติผลสอบแก้ตัว...','info');
+    /*
+     * =====================================================
+     * 1) ตรวจรายการในหน้าจอ
+     * =====================================================
+     */
 
-        const { data:gradeData, error:gradeError } = await supabaseClient
-          .from('grade_results')
-          .update({ retest_grade_code: approvedGrade })
-          .eq('id', row.grade_result_id)
-          .select('id,retest_grade_code');
+    const row =
+      getRowById(requestId);
 
-        if(gradeError) throw gradeError;
-        if(!gradeData || !gradeData.length){
-          throw new Error('ไม่พบรายการ grade_results ที่ต้องการอัปเดต หรือไม่มีสิทธิ์อัปเดต');
-        }
 
-        const { data:reqData, error:reqError } = await supabaseClient
-          .from('grade_retest_requests')
-          .update({
-            status:'approved',
-            approved_at:approvedAt,
-            approved_by:state.currentUser.id,
-            updated_at:approvedAt,
-            rejected_at:null,
-            rejected_by:null,
-            rejected_reason:null
-          })
-          .eq('id', requestId)
-          .eq('status', 'pending_approval')
-          .eq('is_active', true)
-          .select('id,status');
+    if(!row){
 
-        if(reqError) throw reqError;
-        if(!reqData || !reqData.length){
-          throw new Error('อัปเดตสถานะคำขอไม่สำเร็จ หรือรายการนี้ไม่อยู่ในสถานะรออนุมัติแล้ว');
-        }
+      throw new Error(
+        'ไม่พบรายการที่ต้องการอนุมัติ'
+      );
 
-        setStatus('listStatus','อนุมัติแล้ว กำลังอัปเดตข้อมูล StudentPR...', 'info');
-
-        const cacheResult = await refreshStudentReportCache(row.student_code);
-
-        if(!cacheResult.ok){
-          showToast(
-            'อนุมัติสำเร็จ แต่ StudentPR cache ยังไม่อัปเดต',
-            cacheResult.message || 'กรุณาอัปเดต cache ภายหลัง',
-            'warn'
-          );
-        }else{
-          showToast(
-            'อนุมัติสำเร็จ',
-            `อนุมัติผลสอบแก้ตัวของ ${row.student_name} แล้ว และอัปเดต StudentPR แล้ว`,
-            'success'
-          );
-        }
-
-        await loadRows();
-      }catch(err){
-        console.error('approveRequest ERROR',err);
-        const msg=err?.message||err?.details||err?.hint||'อนุมัติไม่สำเร็จ';
-        setStatus('listStatus',msg,'error');
-        showToast('อนุมัติไม่สำเร็จ',msg,'error');
-      }finally{
-        hideLoading();
-      }
     }
+
+
+    if(
+      row.status !==
+      'pending_approval'
+    ){
+
+      throw new Error(
+        'รายการนี้ไม่ได้อยู่ในสถานะรออนุมัติ'
+      );
+
+    }
+
+
+    /*
+     * =====================================================
+     * 2) ตรวจ Registrar Session Token
+     * =====================================================
+     */
+
+    const token =
+      String(
+        state.registrarSessionToken || ''
+      ).trim();
+
+
+    if(!token){
+
+      throw new Error(
+        'Session หมดอายุ กรุณาเข้าสู่ระบบใหม่'
+      );
+
+    }
+
+
+    /*
+     * =====================================================
+     * 3) แสดงสถานะกำลังดำเนินการ
+     * =====================================================
+     */
+
+    showLoading(
+      'กำลังอนุมัติผลสอบแก้ตัว...'
+    );
+
+
+    setStatus(
+      'listStatus',
+      'กำลังอนุมัติผลสอบแก้ตัว...',
+      'info'
+    );
+
+
+    /*
+     * =====================================================
+     * 4) อนุมัติผ่าน Session-secured RPC
+     *
+     * Browser ส่งเพียง:
+     * - Session Token
+     * - Request ID
+     *
+     * Database จะ:
+     * - ตรวจ Session
+     * - ตรวจ G / admin
+     * - ตรวจ Request
+     * - ตรวจ grade_results
+     * - ตรวจกฎผลแก้ตัว
+     * - UPDATE grade_results
+     * - UPDATE grade_retest_requests
+     *
+     * ทั้งหมดอยู่ใน Transaction เดียวกัน
+     * =====================================================
+     */
+
+    const { data, error } =
+      await supabaseClient.rpc(
+        'registrar_approve_retest_request_session',
+        {
+
+          p_token:
+            token,
+
+          p_request_id:
+            requestId
+
+        }
+      );
+
+
+    if(error){
+
+      throw error;
+
+    }
+
+
+    const result =
+      Array.isArray(data)
+        ? data[0]
+        : data;
+
+
+    if(
+      !result ||
+      result.ok !== true
+    ){
+
+      throw new Error(
+        result?.message ||
+        'อนุมัติผลสอบแก้ตัวไม่สำเร็จ'
+      );
+
+    }
+
+
+    /*
+     * =====================================================
+     * 5) RPC อนุมัติสำเร็จแล้ว
+     * อัปเดต StudentPR cache
+     * =====================================================
+     */
+
+    setStatus(
+      'listStatus',
+      'อนุมัติแล้ว กำลังอัปเดตข้อมูล StudentPR...',
+      'info'
+    );
+
+
+    const studentCode =
+      safeText(
+        result.student_code ||
+        row.student_code,
+        ''
+      );
+
+
+    const cacheResult =
+      await refreshStudentReportCache(
+        studentCode
+      );
+
+
+    /*
+     * =====================================================
+     * 6) แจ้งผล
+     *
+     * แม้ cache ล้มเหลว
+     * การอนุมัติใน Database สำเร็จไปแล้ว
+     * =====================================================
+     */
+
+    const studentName =
+      safeText(
+        result.student_name ||
+        row.student_name,
+        '-'
+      );
+
+
+    if(!cacheResult.ok){
+
+      showToast(
+        'อนุมัติสำเร็จ แต่ StudentPR cache ยังไม่อัปเดต',
+        cacheResult.message ||
+        'กรุณาอัปเดต cache ภายหลัง',
+        'warn'
+      );
+
+    }else{
+
+      showToast(
+        'อนุมัติสำเร็จ',
+        `อนุมัติผลสอบแก้ตัวของ ${studentName} แล้ว และอัปเดต StudentPR แล้ว`,
+        'success'
+      );
+
+    }
+
+
+    /*
+     * =====================================================
+     * 7) โหลดรายการล่าสุด
+     * =====================================================
+     */
+
+    await loadRows();
+
+
+  }catch(err){
+
+    console.error(
+      'approveRequest ERROR',
+      err
+    );
+
+
+    const msg =
+      err?.message ||
+      err?.details ||
+      err?.hint ||
+      'อนุมัติไม่สำเร็จ';
+
+
+    setStatus(
+      'listStatus',
+      msg,
+      'error'
+    );
+
+
+    showToast(
+      'อนุมัติไม่สำเร็จ',
+      msg,
+      'error'
+    );
+
+
+  }finally{
+
+    hideLoading();
+
+  }
+
+}
     function openRejectModal(requestId){const row=getRowById(requestId);if(!row){showToast('ไม่พบรายการ','ไม่พบรายการที่ต้องการไม่อนุมัติ','error');return;}state.rejectingId=requestId;el('rejectReasonInput').value='';el('rejectModalSub').textContent=`${safeText(row.student_name,'-')} • ${safeText(row.subject_code,'-')}`;el('rejectModal').classList.add('show');}
     function closeRejectModal(){state.rejectingId=null;el('rejectModal').classList.remove('show');el('rejectReasonInput').value='';}
     async function confirmReject(){await rejectRequest(state.rejectingId,safeText(el('rejectReasonInput').value,''));}
