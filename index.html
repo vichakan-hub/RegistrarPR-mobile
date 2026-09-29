@@ -1734,7 +1734,22 @@ async function logout(){
 
 }
     function setActiveTab(tab){el('homeView').classList.toggle('hidden',tab!=='home');el('approvalView').classList.toggle('hidden',tab!=='approval');el('navHomeBtn').classList.toggle('active',tab==='home');el('navPendingBtn').classList.toggle('active',tab==='approval'&&el('filterStatus').value==='pending_approval');el('navHistoryBtn').classList.toggle('active',tab==='approval'&&el('filterStatus').value!=='pending_approval');}
-    function openApproval(status){el('filterStatus').value=status;setActiveTab('approval');resetList();setStatus('listStatus','กรุณากดแสดงรายการ','info');}
+    async function openApproval(status){
+
+  el('filterStatus').value = status;
+
+  setActiveTab('approval');
+
+  resetList();
+
+  setStatus(
+    'listStatus',
+    'กำลังโหลดรายการ...',
+    'info'
+  );
+
+  await loadRows();
+}
 
     function normalizeGradeValue(grade){const g=String(grade||'').trim().toUpperCase();if(!g)return '';if(g==='ร'||g==='R')return 'ร';if(g==='มส')return 'มส';if(g==='ผ')return 'ผ';if(g==='มผ')return 'มผ';const n=Number(g);if(!Number.isNaN(n))return Number.isInteger(n)?String(n):String(n);return String(grade||'').trim();}
     function isPassGrade(grade){return ['1','1.5','2','2.5','3','3.5','4','ผ'].includes(normalizeGradeValue(grade));}
