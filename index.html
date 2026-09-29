@@ -1747,61 +1747,180 @@ async function logout(){
     function resetList(){state.rows=[];state.rejectingId=null;resetSummary();el('approvalList').innerHTML='<div class="card empty">ยังไม่มีรายการ กรุณากดแสดงรายการ</div>';}
     function getRowById(id){return state.rows.find(r=>String(r.id)===String(id))||null;}
 
-    async function loadRows(){
-      try{
-        if(!state.currentUser?.id) throw new Error('ไม่พบข้อมูลผู้เข้าสู่ระบบ');
+async function loadRows(){
 
-        showLoading('กำลังโหลดรายการ...');
-        setStatus('listStatus','กำลังโหลดรายการ...','info');
-        state.rejectingId = null;
+  try{
 
-        const status = safeText(el('filterStatus').value,'');
-        const selectColumns = 'id,grade_result_id,student_id,student_code,student_name,subject_offering_id,subject_id,subject_code,subject_name,teacher_id,teacher_code,academic_year,term,class_level,room,original_grade_code,requested_retest_grade_code,status,submitted_at,updated_at,approved_at,rejected_at,rejected_reason,is_active';
-
-        const pageSize = 1000;
-        let from = 0;
-        let allRows = [];
-
-        while(true){
-          let query = supabaseClient
-            .from('grade_retest_requests')
-            .select(selectColumns)
-            .eq('is_active', true)
-            .order('submitted_at', { ascending:false })
-            .range(from, from + pageSize - 1);
-
-          if(status) query = query.eq('status', status);
-
-          const { data, error } = await query;
-          if(error) throw error;
-
-          const pageRows = Array.isArray(data) ? data : [];
-          allRows = allRows.concat(pageRows);
-
-          if(pageRows.length < pageSize) break;
-
-          from += pageSize;
-          setStatus('listStatus', `กำลังโหลดรายการ... ${allRows.length} รายการ`, 'info');
-        }
-
-        state.rows = allRows;
-        renderRows(state.rows);
-
-        setStatus(
-          'listStatus',
-          state.rows.length ? `พบรายการ ${state.rows.length} รายการ` : 'ไม่พบรายการตามเงื่อนไขที่เลือก',
-          state.rows.length ? 'success' : 'warn'
-        );
-      }catch(err){
-        console.error('loadRows ERROR',err);
-        state.rows=[];
-        renderRows([]);
-        setStatus('listStatus',err.message||'โหลดรายการไม่สำเร็จ','error');
-        showToast('โหลดรายการไม่สำเร็จ',err.message||'เกิดข้อผิดพลาด','error');
-      }finally{
-        hideLoading();
-      }
+    if(!state.currentUser?.id){
+      throw new Error(
+        'ไม่พบข้อมูลผู้เข้าสู่ระบบ'
+      );
     }
+
+
+    const token =
+      String(
+        state.registrarSessionToken ||
+        ''
+      ).trim();
+
+
+    if(!token){
+      throw new Error(
+        'Session หมดอายุ กรุณาเข้าสู่ระบบใหม่'
+      );
+    }
+
+
+    showLoading(
+      'กำลังโหลดรายการ...'
+    );
+
+
+    setStatus(
+      'listStatus',
+      'กำลังโหลดรายการ...',
+      'info'
+    );
+
+
+    state.rejectingId = null;
+
+
+    const status =
+      safeText(
+        el('filterStatus').value,
+        ''
+      );
+
+
+    const pageSize = 1000;
+
+    let offset = 0;
+
+    let allRows = [];
+
+
+    while(true){
+
+      const {
+        data,
+        error
+      } =
+        await supabaseClient.rpc(
+          'registrar_get_retest_requests_session',
+          {
+            p_token:
+              token,
+
+            p_status:
+              status || null,
+
+            p_limit:
+              pageSize,
+
+            p_offset:
+              offset
+          }
+        );
+
+
+      if(error){
+        throw error;
+      }
+
+
+      const pageRows =
+        Array.isArray(data)
+          ? data
+          : [];
+
+
+      allRows =
+        allRows.concat(
+          pageRows
+        );
+
+
+      if(
+        pageRows.length <
+        pageSize
+      ){
+        break;
+      }
+
+
+      offset += pageSize;
+
+
+      setStatus(
+        'listStatus',
+        `กำลังโหลดรายการ... ${allRows.length} รายการ`,
+        'info'
+      );
+
+    }
+
+
+    state.rows =
+      allRows;
+
+
+    renderRows(
+      state.rows
+    );
+
+
+    setStatus(
+      'listStatus',
+
+      state.rows.length
+        ? `พบรายการ ${state.rows.length} รายการ`
+        : 'ไม่พบรายการตามเงื่อนไขที่เลือก',
+
+      state.rows.length
+        ? 'success'
+        : 'warn'
+    );
+
+
+  }catch(err){
+
+    console.error(
+      'loadRows ERROR',
+      err
+    );
+
+
+    state.rows = [];
+
+
+    renderRows([]);
+
+
+    setStatus(
+      'listStatus',
+      err?.message ||
+      'โหลดรายการไม่สำเร็จ',
+      'error'
+    );
+
+
+    showToast(
+      'โหลดรายการไม่สำเร็จ',
+      err?.message ||
+      'เกิดข้อผิดพลาด',
+      'error'
+    );
+
+
+  }finally{
+
+    hideLoading();
+
+  }
+
+}
 
     function renderRows(rows){const list=el('approvalList');if(!rows.length){list.innerHTML='<div class="card empty">ไม่พบรายการตามเงื่อนไขที่เลือก</div>';updateSummary([]);return;}updateSummary(rows);list.innerHTML=rows.map(row=>{const canApprove=row.status==='pending_approval';const teacherText=safeText(row.teacher_code,'-');return `<div class="card"><div class="row-between"><div><div class="mono">${escapeHtml(safeText(row.student_code,'-'))}</div><div class="student-main">${escapeHtml(safeText(row.student_name,'-'))}</div><div class="student-sub">ชั้น ${escapeHtml(safeText(row.class_level,'-'))}/${escapeHtml(safeText(row.room,'-'))} • ส่งเมื่อ ${escapeHtml(formatThaiDateTime(row.submitted_at))}</div></div>${renderStatusBadge(row.status)}</div><div class="subject-box"><div class="mono">${escapeHtml(safeText(row.subject_code,'-'))}</div><div class="subject-name">${escapeHtml(safeText(row.subject_name,'-'))}</div><div class="student-sub">ปี ${escapeHtml(safeText(row.academic_year,'-'))} / เทอม ${escapeHtml(safeText(row.term,'-'))} • ครูผู้ส่ง ${escapeHtml(teacherText)}</div></div><div class="grade-pair"><div class="grade-box"><div class="grade-label">ผลเดิม</div>${renderGradePill(row.original_grade_code)}</div><div class="grade-box"><div class="grade-label">ผลแก้ตัว</div>${renderGradePill(row.requested_retest_grade_code)}</div></div>${row.status==='rejected'?`<div class="small-note" style="margin-top:10px;color:#d92d20;">เหตุผล: ${escapeHtml(safeText(row.rejected_reason,'-'))}</div>`:''}${canApprove?`<div class="approval-actions"><button class="btn btn-success" type="button" data-approve-id="${escapeHtml(row.id)}">อนุมัติ</button><button class="btn btn-danger" type="button" data-reject-id="${escapeHtml(row.id)}">ไม่อนุมัติ</button></div>`:''}</div>`;}).join('');bindRowButtons();}
     function bindRowButtons(){document.querySelectorAll('[data-approve-id]').forEach(btn=>btn.addEventListener('click',async()=>approveRequest(String(btn.dataset.approveId||''))));document.querySelectorAll('[data-reject-id]').forEach(btn=>btn.addEventListener('click',()=>openRejectModal(String(btn.dataset.rejectId||''))));}
